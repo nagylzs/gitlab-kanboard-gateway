@@ -29,9 +29,10 @@ jobs:
       env:
         GOOS: linux
         GOARCH: amd64
-      run: go build -ldflags "
-        -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.date.outputs.date }}
-        -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${COMMIT}
+      run: \
+        go build -ldflags " \
+        -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.date.outputs.date }} \
+        -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${COMMIT} \
         -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
         -o gitlab-kanboard-gateway \
         cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
