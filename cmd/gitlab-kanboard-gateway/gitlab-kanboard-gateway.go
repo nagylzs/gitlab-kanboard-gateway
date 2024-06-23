@@ -31,7 +31,7 @@ func main() {
 
 	if args.ShowInfo {
 		repo := "https://github.com/nagylzs/gitlab-kanboard-gateway/"
-		baseRef := fmt.Sprintf("%v-/blob/%v", repo, version.Commit)
+		baseRef := fmt.Sprintf("%vblob/%v", repo, version.Commit)
 		fmt.Println(fmt.Sprintf(`
 
 gitlab-kanboard-gateway
