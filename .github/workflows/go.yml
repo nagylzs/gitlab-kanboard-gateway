@@ -36,3 +36,29 @@ jobs:
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
           -o gitlab-kanboard-gateway \
           cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
+
+    - name: 'Upload Linux Artifact'
+      uses: actions/upload-artifact@v4
+      with:
+        name: gitlab-kanboard-gateway-linux-amd64
+        path: gitlab-kanboard-gateway
+        retention-days: 5
+
+    - name: Build Windows Amd64
+      env:
+        GOOS: windows
+        GOARCH: amd64
+      run: |
+        go build -ldflags " \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.date.outputs.date }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${COMMIT} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
+          -o gitlab-kanboard-gateway.exe \
+          cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
+
+    - name: 'Upload Windows Artifact'
+      uses: actions/upload-artifact@v4
+      with:
+        name: gitlab-kanboard-gateway-windows-amd64
+        path: gitlab-kanboard-gateway.exe
+        retention-days: 5
