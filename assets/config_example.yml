@@ -1,0 +1,55 @@
+Kanboard:
+  # URL for your kanboard jsonrpc endpoint, it ends with jsonrpc.php
+  # You can find it under https://your.kanboard.com/settings/api
+  ApiUrl: "https://your.kanboard.com/jsonrpc.php"
+  # Always use "jsonrpc" here
+  Username: "jsonrpc"
+  # You can find it under https://your.kanboard.com/settings/api
+  Password: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  # You should create a technical user in kanboard, and put its user id here
+  UserId: 111
+  # When referenced task is not found in the local cache, then the task cache is reloaded within
+  # this amount of time, and then the push event is processed again. This can happen when somebody
+  # creates a new task, and pushes a commit before the local cache is re-loaded. To avoid excessive
+  # server load, you should avoid setting this below 10s. If you set this value too low, then
+  # refresh interval will be increased to 10*lastRefreshElapsed and a warning is issued.
+  MinRefreshInterval: "15s"
+  # When nothing happens (e.g. no push events) then the local cache is still updated, but less frequently.
+  # DefRefreshInterval determines this interval. You should keep this relatively high.
+  DefRefreshInterval: "5m"
+  # Regular expressions to be used on commit messages. When a regular expression matches, then its first
+  # and only capturing group should contain the task identifier (e.g. a number) of the task. When there
+  # are multiple matches, then comments will be added to multiple tasks.
+  TaskRefs:
+    # task link given directly in the commit message
+    - "https://your.kanboard.com/task/(\\d+)"
+    # '#KB12345' references to task 12345
+    - "#[kK][bB](\\d+)\\b"
+  # When a push event occurs, every commit ref is checked against these patterns.
+  # Commit refs look like "refs/heads/master". Using these patterns, you can control
+  # which commits are converted to KanBoard comments. You can specify multiple patterns,
+  # and at least one must match.
+  Refs:
+    - "refs/heads/main"
+    - "refs/heads/master"
+    #- ".*"
+Webhook:
+  # HTTP server listens for incoming gitlab webhook requests here.
+  # To configure webhooks, look at https://docs.gitlab.com/ee/user/project/integrations/webhook_events.html
+  # Please note that gitlab-kanboard-gateway support push event webhooks only.
+  ListenAddress: "0.0.0.0:8888"
+  # This is the X-Gitlab-Token header value. You should always set this here, and also in gitlab.
+  # Where there is a mismatch, the webhook request is refused with HTTP 401 unauthorized.
+  # This is for your own security. You can disable by setting it to an empty string.
+  SecretToken: "************"
+# Comment processor is used to generate the comment message from the push commit event.
+# For YAML syntax on multi-line strings, see https://yaml-multiline.info/
+# For text processor syntax, see https://pkg.go.dev/text/template
+# For variables that can be used for the processor, see gitlab-kanboard-gateway --info
+# The processor should generate markdown content ( https://docs.kanboard.org/v1/api/comment_procedures/#createcomment )
+CommentTemplate: >-2
+  {{.Event.UserName}} ({{.Event.UserUserName}})
+   pushed commit [{{.Commit.Id}}]({{.Commit.Url}} "{{.Commit.Title}}")
+   to {{.Event.Ref}}
+   (author: {{.Commit.Author.Name}} {{.Commit.Author.Email}})
+
