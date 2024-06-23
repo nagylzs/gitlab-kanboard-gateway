@@ -21,9 +21,9 @@ jobs:
       with:
         go-version: '1.22'
 
-    - name: Get current date
-      id: date
-      run: echo "date=$(date +'%Y-%m-%dT%H:%M:%S')" >> $GITHUB_OUTPUT
+    - name: Get current time
+      uses: josStorer/get-current-time@v2
+      id: current-time
 
     - name: Build Linux Amd64
       env:
@@ -31,9 +31,9 @@ jobs:
         GOARCH: amd64
       run: |
         go build -ldflags " \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.date.outputs.date }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ COMMIT }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ BRANCH }}" \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
           -o gitlab-kanboard-gateway \
           cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
 
@@ -50,9 +50,9 @@ jobs:
         GOARCH: amd64
       run: |
         go build -ldflags " \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.date.outputs.date }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ COMMIT }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ BRANCH }}" \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
           -o gitlab-kanboard-gateway.exe \
           cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
 
