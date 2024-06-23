@@ -22,4 +22,4 @@ jobs:
         go-version: '1.22'
 
     - name: Build
-      run: scripts/build.sh
+      run: go build -o gitlab-kanboard-gateway cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
