@@ -134,6 +134,7 @@ func (p *Processor) runOnce() {
 	references := make([]ReferenceFound, 0)
 
 	for _, commit := range event.Commits {
+		aa := make(map[int]struct{})
 		for _, pattern := range p.cfg.TaskRefPatterns {
 			for _, match := range pattern.FindAllStringSubmatch(commit.Message, -1) {
 				if len(match) < 1 {
@@ -147,6 +148,13 @@ func (p *Processor) runOnce() {
 					signal.Stop(1)
 					return
 				}
+				// there might be two references to the same task from the same commit
+				// we only add one comment per commit per task
+				_, alreadyAdded := aa[taskId]
+				if alreadyAdded {
+					continue
+				}
+				aa[taskId] = struct{}{}
 				task, ok := p.tasks[taskId]
 				if !ok {
 					p.retryEvent(commit, taskId, event)
