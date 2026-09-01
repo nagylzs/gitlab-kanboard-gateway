@@ -5,6 +5,7 @@ import (
 )
 
 func ListAllProjects(kbCfg config.KanboardConfig) (KbResponseGetAllProjects, error) {
+	// https://docs.kanboard.org/v1/api/project_procedures/#getallprojects
 	req := KbAccountLevelRequest{
 		JsonRpc: "2.0",
 		Method:  "getAllProjects",

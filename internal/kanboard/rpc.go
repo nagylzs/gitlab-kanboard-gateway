@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/nagylzs/gitlab-kanboard-gateway/internal/config"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/nagylzs/gitlab-kanboard-gateway/internal/config"
 )
 
 func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, resp *RESP) error {
@@ -17,10 +19,16 @@ func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, r
 		return err
 	}
 
-	// https://docs.kanboard.org/en/1.2.22/api/authentication.html
+	// https://docs.kanboard.org/v1/api/authentication/
 	client := &http.Client{
 		Timeout: time.Second * 10,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			slog.Warn("Redirected from %s to %s (Method changed to: %s)\n",
+				via[len(via)-1].URL, req.URL, req.Method)
+			return nil // Allows seeing if it drops the body
+		},
 	}
+
 	httpReq, err := http.NewRequest("POST", kbCfg.ApiUrl, bytes.NewReader(data))
 	if err != nil {
 		return err
