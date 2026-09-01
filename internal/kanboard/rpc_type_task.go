@@ -19,8 +19,8 @@ type KbResponseTask struct {
 	DateModification    *int        `json:"date_modification"`
 	Reference           string      `json:"reference"`
 	DateStarted         *int        `json:"date_started"`
-	TimeSpent           string      `json:"time_spent"`
-	TimeEstimated       string      `json:"time_estimated"`
+	TimeSpent           int         `json:"time_spent"`
+	TimeEstimated       int         `json:"time_estimated"`
 	SwimlaneId          int         `json:"swimlane_id"`
 	DateMoved           *int        `json:"date_moved"`
 	RecurrenceStatus    int         `json:"recurrence_status"`
