@@ -19,14 +19,14 @@ type KbResponseTask struct {
 	DateModification    *int        `json:"date_modification"`
 	Reference           string      `json:"reference"`
 	DateStarted         *int        `json:"date_started"`
-	TimeSpent           int         `json:"time_spent"`
-	TimeEstimated       int         `json:"time_estimated"`
+	TimeSpent           float64     `json:"time_spent"`
+	TimeEstimated       float64     `json:"time_estimated"`
 	SwimlaneId          int         `json:"swimlane_id"`
 	DateMoved           *int        `json:"date_moved"`
 	RecurrenceStatus    int         `json:"recurrence_status"`
 	RecurrenceTrigger   int         `json:"recurrence_trigger"`
 	RecurrenceFactor    int         `json:"recurrence_factor"`
-	RecurrenceTimeframe int         `json:"recurrence_timeframe"`
+	RecurrenceTimeframe float64     `json:"recurrence_timeframe"`
 	RecurrenceBasedate  *int        `json:"recurrence_basedate"`
 	RecurrenceParent    interface{} `json:"recurrence_parent"`
 	RecurrenceChild     interface{} `json:"recurrence_child"`
