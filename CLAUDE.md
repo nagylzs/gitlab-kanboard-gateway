@@ -77,8 +77,9 @@ Supporting packages:
   (`get_task.go`, `get_all_comments.go`, `create_comment.go`, ...). New read calls use the generic
   `KbRequest[P]` / `KbResponse[R]` envelopes plus a `Kb*IdParam` struct (see `rpc_types.go`); result structs for
   the task-detail procedures live in `rpc_types_details.go`. **Field types follow what the server actually
-  returns, not the API docs**: the docs show every value as a string, but Kanboard 1.2.5x returns ints/bools
-  (see commits 4af9c6d and 4431f42). Nullable dates are `*int`; "not found" lookups return `result: null`, which
+  returns, not the API docs**: the docs show every value as a string, but the Kanboard this is tested against
+  (v1.2.54) returns ints/bools (see commits 4af9c6d and 4431f42). Older Kanboard releases returned strings and
+  are unsupported; never copy field types from the documentation examples, probe the real server instead. Nullable dates are `*int`; "not found" lookups return `result: null`, which
   the wrappers surface as a nil pointer with no error. Empty PHP arrays may serialize as `[]` instead of `{}`
   (tags, metadata), handled by `decodeStringMap`.
 - **`internal/taskdump`** – builds the `kanboard-task` output. `model.go` is the JSON schema (also documented

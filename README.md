@@ -31,6 +31,12 @@ Only push events are supported. Other webhook event types are rejected with HTTP
 * A Kanboard instance with the API enabled (Settings → API).
 * Go 1.22 or newer, if you build from source.
 
+### Compatibility
+
+Tested with Kanboard v1.2.54. Older releases returned most API values as strings (for example `"id": "13"`,
+`"is_active": "1"`) and are not supported: the response types in this code follow what current Kanboard
+returns, which differs from the string-typed examples still shown in the Kanboard API documentation.
+
 ## Installation
 
 ### Pre-built binaries
