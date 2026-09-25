@@ -124,6 +124,35 @@ func LoadConfig(path string) (*Config, error) {
 	return &config, nil
 }
 
+// LoadKanboardConfig reads only the Kanboard connection settings (ApiUrl, Username,
+// Password) from a config file. The file may be a full gateway config or one that
+// contains just the Kanboard section. Used by read-only helper tools.
+func LoadKanboardConfig(path string) (*KanboardConfig, error) {
+	if path == "" {
+		return nil, errors.New("config file path is required")
+	}
+	yfile, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("Cannot read config file %s: %v", path, err.Error())
+	}
+	var config Config
+	err = yaml.Unmarshal(yfile, &config)
+	if err != nil {
+		return nil, fmt.Errorf("Cannot parse YAML file %s: %v", path, err.Error())
+	}
+	kb := config.Kanboard
+	if kb.ApiUrl == "" {
+		return nil, errors.New("Kanboard.ApiUrl should not be empty")
+	}
+	if kb.Username == "" {
+		return nil, errors.New("Kanboard.Username should not be empty")
+	}
+	if kb.Password == "" {
+		return nil, errors.New("Kanboard.Password should not be empty")
+	}
+	return &kb, nil
+}
+
 func compileRegexList(path string, name string, patternStrings []string) ([]*regexp.Regexp, error) {
 	pats := make([]*regexp.Regexp, 0)
 	for _, r := range patternStrings {

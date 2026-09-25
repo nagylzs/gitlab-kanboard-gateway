@@ -51,3 +51,24 @@ For troubleshooting, start with `--debug`.
 
 If it works, then you can add a system service unit (Linux). Under Windows, I recommend using NSSM (https://nssm.cc/).
 
+## kanboard-task: read-only task dump for AI agents
+
+The repository also builds a second binary, `kanboard-task`. It looks up one or more Kanboard tasks and prints
+everything about them as JSON on stdout: description, resolved project / column / swimlane / category, owner and
+creator, tags, subtasks, comments, attachments, internal links to other tasks, and external links. It never writes
+to Kanboard, so it is safe to hand to an AI agent that needs to read tickets.
+
+It uses the same config file as the gateway, but only the `Kanboard` section (`ApiUrl`, `Username`, `Password`)
+is read, so a minimal config with just those three keys also works.
+
+```bash
+kanboard-task -c config.yml 13670                       # one task -> JSON object
+kanboard-task -c config.yml 13670 13671                 # several -> JSON array
+kanboard-task -c config.yml '#KB13670'                  # accepts #KB refs and task URLs too
+kanboard-task -c config.yml -o ./attachments 13670      # also download attachments to ./attachments/13670/
+kanboard-task --info                                    # describes every output field
+```
+
+Logs go to stderr, only JSON goes to stdout. Exit code is 0 on success, 1 for usage/config errors,
+2 when a task does not exist and 3 on Kanboard API errors. The config path can also be given in the
+`KANBOARD_TASK_CONFIG` environment variable.

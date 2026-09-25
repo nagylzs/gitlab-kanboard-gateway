@@ -4,9 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A small Go daemon that receives GitLab **push** webhook events over HTTP, scans commit messages for Kanboard
-task references (configurable regexps), and posts a comment on each referenced Kanboard task via Kanboard's
-JSON-RPC API. Single binary, single config file, no database. No external deps beyond `go-flags` and `yaml.v3`.
+Two Go binaries sharing one config file and one Kanboard JSON-RPC client, no database, no deps beyond
+`go-flags` and `yaml.v3`:
+
+- **`gitlab-kanboard-gateway`** (daemon): receives GitLab **push** webhook events over HTTP, scans commit
+  messages for Kanboard task references (configurable regexps), and posts a comment on each referenced task.
+- **`kanboard-task`** (CLI, read-only): dumps one or more tasks as agent-friendly JSON (description, comments,
+  attachments, subtasks, links, resolved names). Built for AI agents that need to read tickets. It must never
+  call a Kanboard procedure that modifies data.
 
 ## Commands
 
@@ -15,13 +20,20 @@ go build ./...                 # compile everything
 go vet ./...                   # only static check used (no linter config; vet currently reports 2 slog-arg warnings)
 go run ./cmd/gitlab-kanboard-gateway -v -c config.yml   # run locally (needs a real Kanboard + a config file)
 go run ./cmd/gitlab-kanboard-gateway --info             # prints example config + template arg docs, then exits
+go run ./cmd/kanboard-task -c assets/config.yml 13670   # dump a task as JSON (read-only, safe to run)
+go run ./cmd/kanboard-task --info                       # documents every output field
 ./scripts/build.sh             # build for host OS/arch into dist/<os>/<arch>/ with version ldflags
 ./scripts/build.sh all         # cross-build linux+windows x amd64+386 into dist/
 ```
 
 There are no tests in the repo (`go test ./...` finds nothing). CI (`.github/workflows/go.yml`) only builds
 linux/amd64 and windows/amd64 with the same `-ldflags -X ...internal/version.{Built,Commit,Branch}` pattern that
-`scripts/build.sh` uses. If you add a version field, update both.
+`scripts/build.sh` uses. If you add a version field or a new `cmd/`, update both (the `cmds=` list in the
+script and the per-binary build steps in the workflow).
+
+`assets/config.yml` (a symlink to the developer's real config) points at a live Kanboard server. It is fine to use
+it for **read-only** probing (`getTask`, `getAllComments`, ...) while developing, but never call a procedure that
+creates, updates or removes anything there.
 
 `assets/config.yml` is gitignored on purpose: that's where the developer keeps a real config with credentials.
 `assets/config_example.yml` is the committed example and is `go:embed`ded into the binary for `--info`, so keep
@@ -54,16 +66,26 @@ through one global channel:
 
 Supporting packages:
 
-- **`internal/config`** – YAML → `Config`. Note the `*String` fields (`TaskRefsStrings`, `MinRefreshIntervalString`,
+- **`internal/config`** – YAML → `Config`. `LoadConfig` validates the full gateway config;
+  `LoadKanboardConfig` reads only the `Kanboard` connection keys for the read-only tool. Note the `*String` fields (`TaskRefsStrings`, `MinRefreshIntervalString`,
   `CommentTemplateString`, …) are the raw YAML values; `LoadConfig` compiles/parses them into the sibling typed
   fields (`TaskRefPatterns`, `MinRefreshInterval`, `CommentTemplate`) and validates them. Add new settings
   following that same raw+parsed pair pattern. CLI flags live here too (`GatewayOpts`, parsed with `go-flags`).
 - **`internal/kanboard`** – thin JSON-RPC 2.0 client. `WebClientRpcCall[REQ, RESP]` in `rpc.go` does the
   generic POST with HTTP basic auth (`Username` is always `"jsonrpc"`, `Password` is the API token), checks for
   an RPC `error` object, then unmarshals into the typed response. Each API method is its own file
-  (`get_all_projects.go`, `get_all_tasks.go`, `create_comment.go`) with request/response structs in
-  `rpc_types.go` / `rpc_type_task.go`. Kanboard returns many fields as strings or nulls, so the task struct uses
-  pointers/`interface{}` for those; recent commits were mostly fixing these JSON types against real responses.
+  (`get_task.go`, `get_all_comments.go`, `create_comment.go`, ...). New read calls use the generic
+  `KbRequest[P]` / `KbResponse[R]` envelopes plus a `Kb*IdParam` struct (see `rpc_types.go`); result structs for
+  the task-detail procedures live in `rpc_types_details.go`. **Field types follow what the server actually
+  returns, not the API docs**: the docs show every value as a string, but Kanboard 1.2.5x returns ints/bools
+  (see commits 4af9c6d and 4431f42). Nullable dates are `*int`; "not found" lookups return `result: null`, which
+  the wrappers surface as a nil pointer with no error. Empty PHP arrays may serialize as `[]` instead of `{}`
+  (tags, metadata), handled by `decodeStringMap`.
+- **`internal/taskdump`** – builds the `kanboard-task` output. `model.go` is the JSON schema (also documented
+  in the binary's `--info` text; keep the two in sync), `dump.go` does the ~12 read calls per task, resolves
+  ids to names (users cached per `Dumper`), converts unix timestamps to RFC3339 and optionally downloads
+  attachments to `<dir>/<taskId>/<fileId>-<name>`. A failing `getTask` is fatal; any other failed call is
+  appended to `warnings` and the document is still emitted. `parse_id.go` accepts numbers, `#KB123`, and task URLs.
 - **`internal/webhooks`** – GitLab push-event payload structs (`pushevent.go`, field comments show example
   values) and the shared `PushQueue`.
 

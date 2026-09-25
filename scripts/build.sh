@@ -12,7 +12,7 @@ else
     archs=($GOARCH)
 fi
 
-cmds=(gitlab-kanboard-gateway)
+cmds=(gitlab-kanboard-gateway kanboard-task)
 
 set -x
 

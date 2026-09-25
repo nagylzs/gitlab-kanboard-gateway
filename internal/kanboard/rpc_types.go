@@ -87,7 +87,7 @@ type KbResponseSwimlane struct {
 	Description string `json:"description"`
 	ProjectId   int32  `json:"project_id"`
 	Position    int32  `json:"position"`
-	IsActive    bool   `json:"bool"`
+	IsActive    bool   `json:"is_active"`
 }
 
 type KbResponseGetColumns struct {
@@ -140,4 +140,47 @@ type KbCreateCommentResponse struct {
 	JsonRpc string `json:"jsonrpc"`
 	Id      int    `json:"id"`
 	Result  int    `json:"result"`
+}
+
+// Generic request/response envelopes for read-only calls. Params is any JSON
+// serializable struct (see the *Param types below); Result is the typed result.
+type KbRequest[P any] struct {
+	JsonRpc string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Id      int    `json:"id"`
+	Params  P      `json:"params"`
+}
+
+type KbResponse[R any] struct {
+	JsonRpc string `json:"jsonrpc"`
+	Id      int    `json:"id"`
+	Result  R      `json:"result"`
+}
+
+func newRequest[P any](method string, params P) KbRequest[P] {
+	return KbRequest[P]{JsonRpc: "2.0", Method: method, Id: 1, Params: params}
+}
+
+type KbTaskIdParam struct {
+	TaskId int `json:"task_id"`
+}
+
+type KbFileIdParam struct {
+	FileId int `json:"file_id"`
+}
+
+type KbUserIdParam struct {
+	UserId int `json:"user_id"`
+}
+
+type KbColumnIdParam struct {
+	ColumnId int `json:"column_id"`
+}
+
+type KbSwimlaneIdParam struct {
+	SwimlaneId int `json:"swimlane_id"`
+}
+
+type KbCategoryIdParam struct {
+	CategoryId int `json:"category_id"`
 }
