@@ -3,7 +3,7 @@ set -e
 DIR="$(dirname $(realpath $0))"
 DIST=${DIR}/../dist
 
-if [ $1 == "all" ]; then
+if [ "${1:-}" == "all" ]; then
     oss=(linux windows)
     archs=(amd64 386)
 else
@@ -30,13 +30,14 @@ fi
 
 
 mkdir -p ${DIST}
-echo "$BUILT $HEAD" > ${DIST}/version.txt
+echo "$BUILT $BRANCH $COMMIT" > ${DIST}/version.txt
 
 for os in ${oss[@]}
 do
     for arch in ${archs[@]}
     do
         output_dir=${DIST}/${os}/${arch}
+        rm -rf ${output_dir}   # drop binaries from previous builds
         mkdir -p ${output_dir}
         for cmd in ${cmds[@]}
         do
