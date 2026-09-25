@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"github.com/jessevdk/go-flags"
 	"github.com/nagylzs/gitlab-kanboard-gateway/assets"
@@ -18,9 +19,13 @@ var cfg *config.Config = nil
 
 func main() {
 	args := &config.GatewayOpts
-	_, err := flags.ParseArgs(args, os.Args)
+	_, err := flags.ParseArgs(args, os.Args[1:])
 	if err != nil {
-		println(err.Error())
+		var fe *flags.Error
+		if errors.As(err, &fe) && fe.Type == flags.ErrHelp {
+			os.Exit(0)
+		}
+		// go-flags (flags.Default) has already printed the help text or the error
 		os.Exit(1)
 	}
 
