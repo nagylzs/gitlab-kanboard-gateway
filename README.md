@@ -69,6 +69,10 @@ kanboard-task -c config.yml -o ./attachments 13670      # also download attachme
 kanboard-task --info                                    # describes every output field
 ```
 
+Screenshots pasted into comments are Kanboard attachments embedded as relative `<img>` tags; the tool rewrites
+them to Markdown images pointing at the downloaded file (with `-o`) or the absolute Kanboard URL, and lists the
+referenced ids in the comment's `attachment_ids`.
+
 Logs go to stderr, only JSON goes to stdout. Exit code is 0 on success, 1 for usage/config errors,
 2 when a task does not exist and 3 on Kanboard API errors. The config path can also be given in the
 `KANBOARD_TASK_CONFIG` environment variable.

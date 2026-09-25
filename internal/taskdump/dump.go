@@ -163,23 +163,8 @@ func (d *Dumper) Dump(taskId int) (*TaskDocument, error) {
 		}
 	}
 
-	// --- comments ---
-	if comments, err := kanboard.GetAllComments(d.cfg, taskId); err != nil {
-		warn("getAllComments", err)
-	} else {
-		for _, c := range comments {
-			doc.Comments = append(doc.Comments, Comment{
-				Id:         c.Id,
-				Created:    tsPtr(c.DateCreation),
-				Modified:   tsPtr(c.DateModification),
-				Author:     UserRef{Id: c.UserId, Username: c.Username, Name: c.Name, Email: c.Email},
-				Visibility: c.Visibility,
-				Content:    c.Comment,
-			})
-		}
-	}
-
-	// --- attachments ---
+	// --- attachments (before comments: comment text may embed them) ---
+	attByID := make(map[int]*Attachment)
 	if files, err := kanboard.GetAllTaskFiles(d.cfg, taskId); err != nil {
 		warn("getAllTaskFiles", err)
 	} else {
@@ -196,6 +181,24 @@ func (d *Dumper) Dump(taskId int) (*TaskDocument, error) {
 				d.download(taskId, f, &att)
 			}
 			doc.Attachments = append(doc.Attachments, att)
+			attByID[att.Id] = &doc.Attachments[len(doc.Attachments)-1]
+		}
+	}
+
+	// --- comments ---
+	if comments, err := kanboard.GetAllComments(d.cfg, taskId); err != nil {
+		warn("getAllComments", err)
+	} else {
+		for _, c := range comments {
+			cm := Comment{
+				Id:         c.Id,
+				Created:    tsPtr(c.DateCreation),
+				Modified:   tsPtr(c.DateModification),
+				Author:     UserRef{Id: c.UserId, Username: c.Username, Name: c.Name, Email: c.Email},
+				Visibility: c.Visibility,
+			}
+			cm.Content, cm.AttachmentIds = rewriteEmbeddedFiles(c.Comment, appBaseUrl(d.cfg.ApiUrl), attByID)
+			doc.Comments = append(doc.Comments, cm)
 		}
 	}
 

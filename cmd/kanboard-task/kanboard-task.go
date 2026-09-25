@@ -164,8 +164,13 @@ JSON FIELDS (top level)
   recurrence {...}              only present for recurring tasks
   external_task {provider,uri}  only present when the task came from an external provider
   subtasks [{id,title,status,assignee,time_tracking}]   status: todo|in_progress|done
-  comments [{id,created,modified,author{id,username,name,email},visibility,content}]
-                                content is markdown; ordered as returned by Kanboard (oldest first)
+  comments [{id,created,modified,author{id,username,name,email},visibility,content,attachment_ids?}]
+                                content is markdown; ordered as returned by Kanboard (oldest first).
+                                Images pasted into a comment are stored as task attachments; their
+                                relative <img> tags are rewritten to ![<attachment name>](<target>)
+                                where target is the file's local_path when --download-dir was given,
+                                otherwise the absolute Kanboard URL. attachment_ids lists the ids of
+                                the entries in "attachments" that the comment embeds.
   attachments [{id,name,size_bytes,is_image,uploaded,uploaded_by,local_path?,download_error?}]
                                 local_path is set only when --download-dir was given and
                                 the file was saved to DIR/<task-id>/<file-id>-<name>

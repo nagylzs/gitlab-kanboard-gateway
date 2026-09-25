@@ -114,7 +114,12 @@ type Comment struct {
 	Modified   *string `json:"modified"`
 	Author     UserRef `json:"author"`
 	Visibility string  `json:"visibility,omitempty"`
-	Content    string  `json:"content"` // markdown
+	// Markdown. Images pasted into the comment (which Kanboard stores as task
+	// attachments and embeds as relative <img> tags) are rewritten to
+	// ![<attachment name>](<local_path or absolute url>).
+	Content string `json:"content"`
+	// Ids of entries in the task's "attachments" list that this comment embeds.
+	AttachmentIds []int `json:"attachment_ids,omitempty"`
 }
 
 type Attachment struct {

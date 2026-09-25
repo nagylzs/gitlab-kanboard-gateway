@@ -26,7 +26,7 @@ go run ./cmd/kanboard-task --info                       # documents every output
 ./scripts/build.sh all         # cross-build linux+windows x amd64+386 into dist/
 ```
 
-There are no tests in the repo (`go test ./...` finds nothing). CI (`.github/workflows/go.yml`) only builds
+The only tests are in `internal/taskdump` (`go test ./internal/taskdump/ -run TestRewriteEmbeddedFiles`). CI (`.github/workflows/go.yml`) only builds
 linux/amd64 and windows/amd64 with the same `-ldflags -X ...internal/version.{Built,Commit,Branch}` pattern that
 `scripts/build.sh` uses. If you add a version field or a new `cmd/`, update both (the `cmds=` list in the
 script and the per-binary build steps in the workflow).
@@ -86,6 +86,8 @@ Supporting packages:
   ids to names (users cached per `Dumper`), converts unix timestamps to RFC3339 and optionally downloads
   attachments to `<dir>/<taskId>/<fileId>-<name>`. A failing `getTask` is fatal; any other failed call is
   appended to `warnings` and the document is still emitted. `parse_id.go` accepts numbers, `#KB123`, and task URLs.
+  `comments.go` rewrites the relative `<img src="?controller=FileViewerController...">` tags Kanboard inserts
+  for pasted screenshots into markdown images (attachments are therefore collected before comments).
 - **`internal/webhooks`** – GitLab push-event payload structs (`pushevent.go`, field comments show example
   values) and the shared `PushQueue`.
 
