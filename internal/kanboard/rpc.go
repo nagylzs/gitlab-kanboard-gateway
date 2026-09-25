@@ -23,8 +23,8 @@ func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, r
 	client := &http.Client{
 		Timeout: time.Second * 10,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			slog.Warn("Redirected from %s to %s (Method changed to: %s)\n",
-				via[len(via)-1].URL, req.URL, req.Method)
+			slog.Warn("Redirected",
+				"from", via[len(via)-1].URL.String(), "to", req.URL.String(), "method", req.Method)
 			return nil // Allows seeing if it drops the body
 		},
 	}

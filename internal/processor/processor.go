@@ -97,9 +97,10 @@ func (p *Processor) refreshCache() {
 	// Now we add the ones that are failed because referenced to unknown tasks.
 	if len(p.afterRefresh) > 0 {
 		slog.Info(fmt.Sprintf("retrying %v event(s)", len(p.afterRefresh)))
-		p.afterRefresh = make([]webhooks.PushEvent, 0)
 	}
-	for _, event := range p.afterRefresh {
+	retry := p.afterRefresh
+	p.afterRefresh = make([]webhooks.PushEvent, 0)
+	for _, event := range retry {
 		event.CanRetry = false
 		// TODO: this might block forever if the queue is full, but this is not likely (queue length is 1000)
 		webhooks.PushQueue <- event
@@ -180,7 +181,7 @@ func (p *Processor) runOnce() {
 		})
 		var markdown string
 		if err != nil {
-			slog.Warn("error executing template: %w, fallback to default commit message", err)
+			slog.Warn("error executing template, fallback to default commit message", "error", err.Error())
 			markdown = fmt.Sprintf(
 				`%v (%v) pushed commit [%v](%v "%v") to %v`,
 				event.UserName, event.UserUserName,

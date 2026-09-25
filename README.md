@@ -18,13 +18,13 @@ In order to use this program, you should aready have:
 ### Prepare your kanboard instance
 
 * Create a normal user in your kanboard, take its user id. This technical user will be adding comments to kanboard tasks.
-* Add this user to some or all ofr your kanboard projects. If you don't assign the user to a project,
+* Add this user to some or all of your kanboard projects. If you don't assign the user to a project,
   then no comments can be added to the tasks of that project.
-* Get you API token and api endpoint in kanboard (under global settings e.g. https://your_kanboard.com/settings/api)
+* Get your API token and api endpoint in kanboard (under global settings e.g. https://your_kanboard.com/settings/api)
 
 ### Prepare your gitlab instance
 
-* Open a projekt in gitlab, go to settings/webhooks
+* Open a project in gitlab, go to settings/webhooks
 * Add a webhook for "push" events. Don't forget to set a secret token (X-Gitlab-Token header)
 * It might be necessary to add your server's address under "admin area / settings / network / outbound requests"
 
