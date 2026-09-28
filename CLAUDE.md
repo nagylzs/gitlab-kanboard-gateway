@@ -87,7 +87,9 @@ Supporting packages:
   ids to names (users cached per `Dumper`), converts unix timestamps to RFC3339 and optionally downloads
   attachments to `<dir>/<taskId>/<fileId>-<name>`. A failing `getTask` is fatal; any other failed call is
   appended to `warnings` and the document is still emitted. `parse_id.go` accepts numbers, `#KB123`, and task URLs.
-  `comments.go` rewrites the relative `<img src="?controller=FileViewerController...">` tags Kanboard inserts
+  `search.go` implements `--search`: `searchTasks` per project (the API has no global search), run in parallel
+  over the active or `--project`-selected projects, merged into a `SearchResult` (`model.go`) sorted by
+  modification time. `comments.go` rewrites the relative `<img src="?controller=FileViewerController...">` tags Kanboard inserts
   for pasted screenshots into markdown images (attachments are therefore collected before comments).
 - **`internal/webhooks`** – GitLab push-event payload structs (`pushevent.go`, field comments show example
   values) and the shared `PushQueue`.

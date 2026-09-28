@@ -184,6 +184,26 @@ kanboard-task -c config.yml -o ./attachments 13670   # also download attachments
 kanboard-task --info                                 # documents every field of the output
 ```
 
+### Searching
+
+With `-s/--search QUERY` it runs Kanboard's `searchTasks` instead and prints one JSON object with a short
+summary of each matching task (id, url, title, status, project, column, assignee, dates, counters and the
+first 300 characters of the description), most recently modified first. `QUERY` uses the search syntax of
+the Kanboard web UI: plain words match title and description, and filters such as `status:open`,
+`assignee:<username>`, `title:`, `description:`, `comment:`, `tag:`, `column:` or `created:>=2026-01-01`
+can be combined. The API has no global search, so every active project is searched (8 in parallel);
+`-p/--project` restricts the search to projects given by id or by a case-insensitive part of the name.
+
+```bash
+kanboard-task -c config.yml -s 'invoice status:open'              # all active projects, max 50 hits
+kanboard-task -c config.yml -s 'comment:"deploy"' -p webshop -p 12 # only these projects
+kanboard-task -c config.yml -s 'export' --limit 0 --include-inactive
+```
+
+`total` counts every hit, `truncated` tells whether the list was cut to `--limit` (default 50). A project
+whose search failed is listed in `warnings`; the others are still printed. Dump a hit by id for the full
+ticket.
+
 Notable output details:
 
 * Ids are resolved to names, timestamps are RFC 3339 strings, `null` means "not set".

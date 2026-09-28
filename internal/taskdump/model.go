@@ -161,6 +161,52 @@ type LinkedDates struct {
 	Completed *string `json:"completed"`
 }
 
+// SearchResult is the JSON object printed for --search.
+type SearchResult struct {
+	Query            string      `json:"query"`
+	ProjectsSearched int         `json:"projects_searched"`
+	Total            int         `json:"total"`     // all hits, before --limit
+	Truncated        bool        `json:"truncated"` // true if tasks was cut to --limit
+	Tasks            []SearchHit `json:"tasks"`     // most recently modified first
+	Warnings         []string    `json:"warnings,omitempty"`
+	FetchedAt        string      `json:"fetched_at"`
+}
+
+// SearchHit is a short summary of one matching task; dump the task by id for the rest.
+type SearchHit struct {
+	Id                 int          `json:"id"`
+	Url                string       `json:"url"`
+	Title              string       `json:"title"`
+	Status             string       `json:"status"` // "open" | "closed"
+	Project            NamedRef     `json:"project"`
+	Column             string       `json:"column"`
+	Swimlane           string       `json:"swimlane,omitempty"`
+	Category           string       `json:"category,omitempty"`
+	Assignee           *UserRef     `json:"assignee"`
+	Priority           int          `json:"priority"`
+	Reference          string       `json:"reference,omitempty"`
+	Dates              SearchDates  `json:"dates"`
+	TimeTracking       TimeTracking `json:"time_tracking"`
+	Counts             SearchCounts `json:"counts"`
+	DescriptionExcerpt string       `json:"description_excerpt"` // whitespace collapsed, max 300 characters
+}
+
+type SearchDates struct {
+	Created   *string `json:"created"`
+	Modified  *string `json:"modified"`
+	Due       *string `json:"due"`
+	Completed *string `json:"completed"`
+}
+
+type SearchCounts struct {
+	Comments      int `json:"comments"`
+	Attachments   int `json:"attachments"`
+	Subtasks      int `json:"subtasks"`
+	SubtasksDone  int `json:"subtasks_done"`
+	Links         int `json:"links"`
+	ExternalLinks int `json:"external_links"`
+}
+
 type ExternalLink struct {
 	Id       int      `json:"id"`
 	Type     string   `json:"type"`     // "weblink", "attachment", ...

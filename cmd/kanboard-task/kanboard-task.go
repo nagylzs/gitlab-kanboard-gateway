@@ -4,6 +4,9 @@
 // of a ticket: description, comments, attachments, subtasks, links, and the
 // resolved names of project / column / swimlane / category / users.
 //
+// With --search it instead runs a Kanboard search query in every (or the selected)
+// project and prints a short summary of each matching task.
+//
 // It never modifies anything on the Kanboard server.
 package main
 
@@ -28,14 +31,18 @@ const (
 )
 
 type opts struct {
-	ConfigFile       string `short:"c" long:"config" description:"Config file path (only the Kanboard section is used)" env:"KANBOARD_TASK_CONFIG"`
-	DownloadDir      string `short:"o" long:"download-dir" description:"Download attachments into DIR/<task-id>/ and report their local paths" value-name:"DIR"`
-	MaxDownloadBytes int64  `long:"max-download-bytes" description:"Skip attachments larger than this (0 = no limit)" default:"20971520"`
-	Compact          bool   `long:"compact" description:"Print single-line JSON instead of indented"`
-	Verbose          bool   `short:"v" long:"verbose" description:"Verbose loglevel (logs go to stderr)"`
-	Debug            bool   `short:"d" long:"debug" description:"Debug loglevel"`
-	ShowVersion      bool   `long:"version" description:"Show version information and exit"`
-	ShowInfo         bool   `short:"i" long:"info" description:"Describe the output format and exit"`
+	ConfigFile       string   `short:"c" long:"config" description:"Config file path (only the Kanboard section is used)" env:"KANBOARD_TASK_CONFIG"`
+	DownloadDir      string   `short:"o" long:"download-dir" description:"Download attachments into DIR/<task-id>/ and report their local paths" value-name:"DIR"`
+	MaxDownloadBytes int64    `long:"max-download-bytes" description:"Skip attachments larger than this (0 = no limit)" default:"20971520"`
+	Compact          bool     `long:"compact" description:"Print single-line JSON instead of indented"`
+	Verbose          bool     `short:"v" long:"verbose" description:"Verbose loglevel (logs go to stderr)"`
+	Debug            bool     `short:"d" long:"debug" description:"Debug loglevel"`
+	ShowVersion      bool     `long:"version" description:"Show version information and exit"`
+	ShowInfo         bool     `short:"i" long:"info" description:"Describe the output format and exit"`
+	Search           string   `short:"s" long:"search" description:"Search tasks with a Kanboard query (web UI search syntax) instead of dumping TASKs" value-name:"QUERY"`
+	Projects         []string `short:"p" long:"project" description:"With --search: only this project (id, or part of the name); repeatable" value-name:"PROJECT"`
+	IncludeInactive  bool     `long:"include-inactive" description:"With --search: also search inactive projects"`
+	Limit            int      `long:"limit" description:"With --search: print at most this many hits (0 = no limit)" default:"50"`
 	Args             struct {
 		Tasks []string `positional-arg-name:"TASK" description:"Task number, #KB123, or task URL (one or more)"`
 	} `positional-args:"yes"`
@@ -69,6 +76,18 @@ func main() {
 		level.Set(slog.LevelInfo)
 	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+
+	if o.Search != "" {
+		if len(o.Args.Tasks) > 0 {
+			fmt.Fprintln(os.Stderr, "error: TASK arguments cannot be combined with --search")
+			os.Exit(exitUsage)
+		}
+		os.Exit(search(o))
+	}
+	if len(o.Projects) > 0 || o.IncludeInactive {
+		fmt.Fprintln(os.Stderr, "error: --project and --include-inactive require --search")
+		os.Exit(exitUsage)
+	}
 
 	if len(o.Args.Tasks) == 0 {
 		fmt.Fprintln(os.Stderr, "error: at least one TASK argument is required (see --help)")
@@ -117,23 +136,58 @@ func main() {
 		if len(ids) == 1 {
 			out = docs[0]
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetEscapeHTML(false)
-		if !o.Compact {
-			enc.SetIndent("", "  ")
-		}
-		if err := enc.Encode(out); err != nil {
-			fmt.Fprintf(os.Stderr, "error: cannot encode JSON: %v\n", err)
+		if err := printJson(out, o.Compact); err != nil {
 			os.Exit(exitApiError)
 		}
 	}
 	os.Exit(exit)
 }
 
+func search(o opts) int {
+	cfg, err := config.LoadKanboardConfig(o.ConfigFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return exitUsage
+	}
+	res, err := taskdump.Search(*cfg, taskdump.SearchOptions{
+		Query:           o.Search,
+		Projects:        o.Projects,
+		IncludeInactive: o.IncludeInactive,
+		Limit:           o.Limit,
+		Workers:         8,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		var np taskdump.ErrNoProject
+		if errors.As(err, &np) {
+			return exitUsage
+		}
+		return exitApiError
+	}
+	if err := printJson(res, o.Compact); err != nil {
+		return exitApiError
+	}
+	return exitOk
+}
+
+func printJson(v interface{}, compact bool) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	if !compact {
+		enc.SetIndent("", "  ")
+	}
+	err := enc.Encode(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot encode JSON: %v\n", err)
+	}
+	return err
+}
+
 const infoText = `kanboard-task - dump a Kanboard task as JSON (read-only)
 
 USAGE
   kanboard-task -c config.yml [-o DIR] TASK [TASK...]
+  kanboard-task -c config.yml -s QUERY [-p PROJECT]... [--limit N]
 
   TASK may be a number (123), a hash reference (#123, #KB123), or a task URL.
   The config file is the same YAML as used by gitlab-kanboard-gateway; only
@@ -183,8 +237,35 @@ JSON FIELDS (top level)
                                 the affected list is then empty rather than missing
   fetched_at                    RFC3339 time the data was read
 
+SEARCH (--search QUERY)
+  Runs Kanboard's searchTasks in every active project (or only in the --project
+  ones, matched by id or case-insensitive part of the name) and prints one JSON
+  object. QUERY uses the web UI search syntax: plain words match the title and
+  description; filters such as status:open, assignee:<username>, creator:...,
+  title:"...", description:..., comment:..., tag:..., column:..., category:...,
+  created:>=2026-01-01 can be combined ("me" does not work: the API user is not a
+  Kanboard user). Without a status: filter both open and closed tasks are returned.
+
+  query, projects_searched
+  total, truncated              total counts every hit; tasks is cut to --limit
+                                (default 50, 0 = no limit) when truncated is true
+  tasks [{id,url,title,status,project{id,name},column,swimlane?,category?,
+          assignee{id,username,name}|null,priority,reference?,
+          dates{created,modified,due,completed},time_tracking,
+          counts{comments,attachments,subtasks,subtasks_done,links,external_links},
+          description_excerpt}]
+                                most recently modified first; description_excerpt is
+                                the first 300 characters with whitespace collapsed.
+                                Dump a hit by id for the full ticket.
+  warnings [string]             projects whose search failed (the rest are still listed)
+  fetched_at
+  Exit codes: 0 ok (also with no hits), 1 usage error or no project matches
+  --project, 3 API error (project list failed, or the search failed everywhere).
+
 EXAMPLES
   kanboard-task -c config.yml 13670
   kanboard-task -c config.yml -o ./attachments 13670 | jq .attachments
   kanboard-task -c config.yml --compact 1 2 3
+  kanboard-task -c config.yml -s 'invoice status:open'
+  kanboard-task -c config.yml -s 'dashboard' -p webshop -p 12 --limit 0
 `
