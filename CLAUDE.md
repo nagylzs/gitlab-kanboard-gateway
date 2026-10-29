@@ -17,7 +17,7 @@ Two Go binaries sharing one config file and one Kanboard JSON-RPC client, no dat
 
 ```bash
 go build ./...                 # compile everything
-go vet ./...                   # only static check used (no linter config; vet currently reports 2 slog-arg warnings)
+go vet ./...                   # only static check used (no linter config; vet is currently clean)
 go run ./cmd/gitlab-kanboard-gateway -v -c config.yml   # run locally (needs a real Kanboard + a config file)
 go run ./cmd/gitlab-kanboard-gateway --info             # prints example config + template arg docs, then exits
 go run ./cmd/kanboard-task -c assets/config.yml 13670   # dump a task as JSON (read-only, safe to run)
@@ -72,7 +72,8 @@ Supporting packages:
   fields (`TaskRefPatterns`, `MinRefreshInterval`, `CommentTemplate`) and validates them. Add new settings
   following that same raw+parsed pair pattern. CLI flags live here too (`GatewayOpts`, parsed with `go-flags`).
 - **`internal/kanboard`** – thin JSON-RPC 2.0 client. `WebClientRpcCall[REQ, RESP]` in `rpc.go` does the
-  generic POST with HTTP basic auth (`Username` is always `"jsonrpc"`, `Password` is the API token), checks for
+  generic POST with HTTP basic auth (`Username` `"jsonrpc"` + the application API token, or, for `kanboard-task`
+  only, a real login + personal access token: see `KanboardConfig.IsUserAuth`), checks for
   an RPC `error` object, then unmarshals into the typed response. Each API method is its own file
   (`get_task.go`, `get_all_comments.go`, `create_comment.go`, ...). New read calls use the generic
   `KbRequest[P]` / `KbResponse[R]` envelopes plus a `Kb*IdParam` struct (see `rpc_types.go`); result structs for
@@ -81,14 +82,19 @@ Supporting packages:
   (v1.2.54) returns ints/bools (see commits 4af9c6d and 4431f42). Older Kanboard releases returned strings and
   are unsupported; never copy field types from the documentation examples, probe the real server instead. Nullable dates are `*int`; "not found" lookups return `result: null`, which
   the wrappers surface as a nil pointer with no error. Empty PHP arrays may serialize as `[]` instead of `{}`
-  (tags, metadata), handled by `decodeStringMap`.
+  (tags, metadata), handled by `decodeStringMap`. RPC error objects come back as `*RpcError`; `IsForbidden`
+  detects the 403 a personal token gets for admin-only procedures (`getUser`, `getAllProjects`) and for
+  projects the user is not a member of. That project check applies to Kanboard admins too; only the
+  `jsonrpc` token skips it.
 - **`internal/taskdump`** – builds the `kanboard-task` output. `model.go` is the JSON schema (also documented
   in the binary's `--info` text; keep the two in sync), `dump.go` does the ~12 read calls per task, resolves
-  ids to names (users cached per `Dumper`), converts unix timestamps to RFC3339 and optionally downloads
+  ids to names (users cached per `Dumper`; when `getUser` is forbidden, display names come from
+  `getProjectUsers`), converts unix timestamps to RFC3339 and optionally downloads
   attachments to `<dir>/<taskId>/<fileId>-<name>`. A failing `getTask` is fatal; any other failed call is
   appended to `warnings` and the document is still emitted. `parse_id.go` accepts numbers, `#KB123`, and task URLs.
   `search.go` implements `--search`: `searchTasks` per project (the API has no global search), run in parallel
-  over the active or `--project`-selected projects, merged into a `SearchResult` (`model.go`) sorted by
+  over the active or `--project`-selected projects (`getAllProjects` with the `jsonrpc` token, `getMyProjects`
+  with a personal token), merged into a `SearchResult` (`model.go`) sorted by
   modification time. `comments.go` rewrites the relative `<img src="?controller=FileViewerController...">` tags Kanboard inserts
   for pasted screenshots into markdown images (attachments are therefore collected before comments).
 - **`internal/webhooks`** – GitLab push-event payload structs (`pushevent.go`, field comments show example

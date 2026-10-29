@@ -69,7 +69,8 @@ go build ./cmd/kanboard-task
 * Add this user as a member of every project that should receive commit comments. Tasks of projects the user
   is not a member of are invisible to the gateway, so no comments can be added there.
 * Open *Settings → API* in Kanboard and note the API endpoint URL (ends with `jsonrpc.php`) and the API token.
-  They go into `Kanboard.ApiUrl` and `Kanboard.Password`. `Kanboard.Username` must always be `jsonrpc`.
+  They go into `Kanboard.ApiUrl` and `Kanboard.Password`. For the gateway, `Kanboard.Username` must be
+  `jsonrpc`. (`kanboard-task` can also use a personal token, see below.)
 
 ### 2. GitLab
 
@@ -176,6 +177,17 @@ It uses the same configuration file as the gateway, but reads only `Kanboard.Api
 and `Kanboard.Password`. A file containing just those three keys is sufficient. The path can also be given
 in the `KANBOARD_TASK_CONFIG` environment variable.
 
+Instead of the application API token (`Username: "jsonrpc"`), `kanboard-task` can log in as a Kanboard user:
+set `Username` to the user's login name and `Password` to a personal access token created under
+*My profile → API*. It then reads with that user's permissions:
+
+* Only projects the user is a member of are accessible, even if the user is a Kanboard administrator.
+  Other tasks fail with an API error (403), and `--search` searches only the user's projects.
+* For a non-administrator, `owner` and `creator` contain only the id and the display name, because
+  looking up a user (`getUser`) is admin-only. The name is taken from the project's member list.
+* Comments restricted to managers or administrators are left out for users below that role.
+* `assignee:me` and similar `me` filters work in `--search` queries.
+
 ```bash
 kanboard-task -c config.yml 13670                    # one task -> JSON object
 kanboard-task -c config.yml 13670 13671              # several tasks -> JSON array
@@ -191,7 +203,8 @@ summary of each matching task (id, url, title, status, project, column, assignee
 first 300 characters of the description), most recently modified first. `QUERY` uses the search syntax of
 the Kanboard web UI: plain words match title and description, and filters such as `status:open`,
 `assignee:<username>`, `title:`, `description:`, `comment:`, `tag:`, `column:` or `created:>=2026-01-01`
-can be combined. The API has no global search, so every active project is searched (8 in parallel);
+can be combined. The API has no global search, so every active project is searched (8 in parallel; with a
+personal token every active project the user is a member of);
 `-p/--project` restricts the search to projects given by id or by a case-insensitive part of the name.
 
 ```bash

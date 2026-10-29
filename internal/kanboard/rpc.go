@@ -3,6 +3,7 @@ package kanboard
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,26 @@ import (
 
 	"github.com/nagylzs/gitlab-kanboard-gateway/internal/config"
 )
+
+// RpcError is an error object returned by the Kanboard JSON-RPC server.
+type RpcError struct {
+	HttpStatus int
+	Code       int32
+	Message    string
+	Data       string
+}
+
+func (e *RpcError) Error() string {
+	return fmt.Sprintf("error httpStatus=%v errorCode=%v errorMessage=%v data=%v",
+		e.HttpStatus, e.Code, e.Message, e.Data)
+}
+
+// IsForbidden reports whether the server refused the procedure for the logged-in user:
+// an admin-only procedure, or a project the user is not a member of.
+func IsForbidden(err error) bool {
+	var rpcErr *RpcError
+	return errors.As(err, &rpcErr) && rpcErr.Code == 403
+}
 
 func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, resp *RESP) error {
 	// Connect to server
@@ -55,9 +76,12 @@ func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, r
 				"json rpc protocol error, got jsonrpc=%v instead of 2.0", rpcErr.JsonRpc)
 		}
 		if rpcErr.Error.Message != "" {
-			return fmt.Errorf(
-				"error httpStatus=%v errorCode=%v errorMessage=%v data=%v",
-				response.StatusCode, rpcErr.Error.Code, rpcErr.Error.Message, rpcErr.Error.Data)
+			return &RpcError{
+				HttpStatus: response.StatusCode,
+				Code:       rpcErr.Error.Code,
+				Message:    rpcErr.Error.Message,
+				Data:       rpcErr.Error.Data,
+			}
 		}
 	}
 	err = json.Unmarshal(bodyBytes, &resp)

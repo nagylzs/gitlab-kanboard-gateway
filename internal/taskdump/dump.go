@@ -26,10 +26,19 @@ type Dumper struct {
 	cfg   config.KanboardConfig
 	opts  Options
 	users map[int]*UserRef
+	// getUser is admin-only. Once it was refused, users are looked up among the
+	// members of the task's project instead (cached per project).
+	getUserForbidden bool
+	projectUsers     map[int]projectUsers
+}
+
+type projectUsers struct {
+	names map[int]string
+	err   error
 }
 
 func NewDumper(cfg config.KanboardConfig, opts Options) *Dumper {
-	return &Dumper{cfg: cfg, opts: opts, users: make(map[int]*UserRef)}
+	return &Dumper{cfg: cfg, opts: opts, users: make(map[int]*UserRef), projectUsers: make(map[int]projectUsers)}
 }
 
 // ErrNotFound is returned by Dump when the task id does not exist.
@@ -131,8 +140,8 @@ func (d *Dumper) Dump(taskId int) (*TaskDocument, error) {
 			doc.Category = &NamedRef{Id: int(cat.Id), Name: cat.Name}
 		}
 	}
-	doc.Owner = d.user(task.OwnerId, warn)
-	doc.Creator = d.user(task.CreatorId, warn)
+	doc.Owner = d.user(task.OwnerId, task.ProjectId, warn)
+	doc.Creator = d.user(task.CreatorId, task.ProjectId, warn)
 
 	// --- tags & metadata ---
 	if tags, err := kanboard.GetTaskTags(d.cfg, taskId); err != nil {
@@ -276,24 +285,48 @@ func (d *Dumper) download(taskId int, f kanboard.KbResponseTaskFile, att *Attach
 }
 
 // user resolves a user id via the API (cached). Id 0 means "nobody".
-func (d *Dumper) user(id int, warn func(string, error)) *UserRef {
+func (d *Dumper) user(id int, projectId int, warn func(string, error)) *UserRef {
 	if id == 0 {
 		return nil
 	}
 	if u, ok := d.users[id]; ok {
 		return u
 	}
-	u, err := kanboard.GetUser(d.cfg, id)
-	if err != nil {
-		warn(fmt.Sprintf("getUser %v", id), err)
+	if !d.getUserForbidden {
+		u, err := kanboard.GetUser(d.cfg, id)
+		if err == nil {
+			ref := &UserRef{Id: id}
+			if u != nil {
+				ref = &UserRef{Id: u.Id, Username: u.Username, Name: u.Name, Email: u.Email}
+			}
+			d.users[id] = ref
+			return ref
+		}
+		if !kanboard.IsForbidden(err) {
+			warn(fmt.Sprintf("getUser %v", id), err)
+			return &UserRef{Id: id}
+		}
+		d.getUserForbidden = true
+	}
+	// A personal token of a non-admin user: only the display name of project members.
+	pu, ok := d.projectUsers[projectId]
+	if !ok {
+		pu.names, pu.err = kanboard.GetProjectUsers(d.cfg, projectId)
+		d.projectUsers[projectId] = pu
+		if pu.err != nil {
+			warn(fmt.Sprintf("getProjectUsers %v", projectId), pu.err)
+		}
+	}
+	if pu.err != nil {
 		return &UserRef{Id: id}
 	}
-	var ref *UserRef
-	if u != nil {
-		ref = &UserRef{Id: u.Id, Username: u.Username, Name: u.Name, Email: u.Email}
-	} else {
-		ref = &UserRef{Id: id}
+	name, ok := pu.names[id]
+	if !ok {
+		warn(fmt.Sprintf("user %v", id), fmt.Errorf(
+			"getUser is admin-only and the user is not a member of project %v", projectId))
+		return &UserRef{Id: id}
 	}
+	ref := &UserRef{Id: id, Name: name}
 	d.users[id] = ref
 	return ref
 }

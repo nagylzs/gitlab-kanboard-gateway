@@ -2,9 +2,13 @@ Kanboard:
   # URL for your kanboard jsonrpc endpoint, it ends with jsonrpc.php
   # You can find it under https://your.kanboard.com/settings/api
   ApiUrl: "https://your.kanboard.com/jsonrpc.php"
-  # Always use "jsonrpc" here
+  # "jsonrpc" logs in with the application API token, which can access every project.
+  # The gateway needs this.
+  # kanboard-task can also log in as a Kanboard user: put the user's login name here and
+  # a personal access token (My profile -> API) into Password. It then sees only the
+  # projects that user is a member of (even if the user is an admin).
   Username: "jsonrpc"
-  # You can find it under https://your.kanboard.com/settings/api
+  # The API token from https://your.kanboard.com/settings/api (or a personal access token)
   Password: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
   # You should create a technical user in kanboard, and put its user id here
   UserId: 111

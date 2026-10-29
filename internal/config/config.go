@@ -41,6 +41,18 @@ type KanboardConfig struct {
 	DefRefreshInterval time.Duration
 }
 
+// AppTokenUsername is the API username that goes with the application-wide API token
+// (Settings → API). That token bypasses every permission check.
+const AppTokenUsername = "jsonrpc"
+
+// IsUserAuth reports whether the API logs in as a Kanboard user (with a personal access
+// token or password) instead of using the application token. Such a login gets that
+// user's permissions: only projects the user is a member of (even for Kanboard admins),
+// and admin-only procedures such as getUser and getAllProjects only for admins.
+func (k KanboardConfig) IsUserAuth() bool {
+	return k.Username != AppTokenUsername
+}
+
 type WebhookConfig struct {
 	ListenAddress string `yaml:"ListenAddress"`
 	SecretToken   string `yaml:"SecretToken"`

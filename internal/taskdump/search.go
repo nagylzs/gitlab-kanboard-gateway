@@ -1,6 +1,7 @@
 package taskdump
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -28,9 +29,18 @@ type SearchOptions struct {
 }
 
 // ErrNoProject is returned by Search when a --project filter matches no project.
-type ErrNoProject struct{ Filter string }
+type ErrNoProject struct {
+	Filter string
+	// Only the projects of the logged-in user were searched (personal token).
+	MemberOnly bool
+}
 
-func (e ErrNoProject) Error() string { return fmt.Sprintf("no project matches %q", e.Filter) }
+func (e ErrNoProject) Error() string {
+	if e.MemberOnly {
+		return fmt.Sprintf("no project matches %q among the projects the API user is a member of", e.Filter)
+	}
+	return fmt.Sprintf("no project matches %q", e.Filter)
+}
 
 const excerptRunes = 300
 
@@ -38,12 +48,17 @@ const excerptRunes = 300
 // modification first. A failure in one project is recorded in Warnings; an error is
 // returned only if the project list cannot be loaded or every project search failed.
 func Search(cfg config.KanboardConfig, opts SearchOptions) (*SearchResult, error) {
-	projects, err := kanboard.ListAllProjects(cfg)
+	projects, err := listProjects(cfg, opts)
 	if err != nil {
-		return nil, fmt.Errorf("getAllProjects: %w", err)
+		return nil, err
 	}
-	selected, err := selectProjects(projects.Result, opts)
+	selected, err := selectProjects(projects, opts)
 	if err != nil {
+		var np ErrNoProject
+		if errors.As(err, &np) {
+			np.MemberOnly = cfg.IsUserAuth()
+			return nil, np
+		}
 		return nil, err
 	}
 
@@ -99,6 +114,49 @@ func Search(cfg config.KanboardConfig, opts SearchOptions) (*SearchResult, error
 		res.Truncated = true
 	}
 	return res, nil
+}
+
+// listProjects returns the projects to choose from. The application token sees every
+// project. A personal token is refused (403) in projects its user is not a member of,
+// even for Kanboard admins, so only the user's own projects are listed then.
+func listProjects(cfg config.KanboardConfig, opts SearchOptions) ([]kanboard.KbResponseProject, error) {
+	if !cfg.IsUserAuth() {
+		resp, err := kanboard.ListAllProjects(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("getAllProjects: %w", err)
+		}
+		return resp.Result, nil
+	}
+	projects, err := kanboard.GetMyProjects(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("getMyProjects: %w", err)
+	}
+	if len(opts.Projects) == 0 && !opts.IncludeInactive {
+		return projects, nil
+	}
+	// getMyProjects returns active projects only; the inactive ones are listed by
+	// getMyProjectsList, but with their names only.
+	names, err := kanboard.GetMyProjectsList(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("getMyProjectsList: %w", err)
+	}
+	have := make(map[int32]bool)
+	for _, p := range projects {
+		have[p.Id] = true
+	}
+	for id := range names {
+		if have[int32(id)] {
+			continue
+		}
+		p, err := kanboard.GetProjectById(cfg, id)
+		if err != nil {
+			return nil, fmt.Errorf("getProjectById %v: %w", id, err)
+		}
+		if p != nil {
+			projects = append(projects, *p)
+		}
+	}
+	return projects, nil
 }
 
 func selectProjects(all []kanboard.KbResponseProject, opts SearchOptions) ([]kanboard.KbResponseProject, error) {

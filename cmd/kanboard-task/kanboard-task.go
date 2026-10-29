@@ -194,6 +194,17 @@ USAGE
   Kanboard.ApiUrl, Kanboard.Username and Kanboard.Password are read.
   The path can also be given via the KANBOARD_TASK_CONFIG environment variable.
 
+AUTHENTICATION
+  Username "jsonrpc" with the application API token (Settings > API) can read
+  every project. Any other Username logs in as that Kanboard user, with a personal
+  access token (My profile > API) as Password, and gets that user's permissions:
+  - only projects the user is a member of, even for Kanboard admins: other tasks
+    fail with a 403 API error (exit 3), --search covers only the user's projects;
+  - for a non-admin user, owner and creator have only {id,name} (no username or
+    email), and only if they are members of the task's project;
+  - comments restricted to managers or admins are left out for users below
+    that role.
+
 OUTPUT
   stdout: one JSON object for a single TASK, a JSON array when several are given.
   stderr: log lines and errors (never JSON data).
@@ -209,7 +220,7 @@ JSON FIELDS (top level)
   swimlane {id,name} | null
   category {id,name} | null
   color, priority, score, reference, position
-  owner {id,username,name,email} | null      the assignee
+  owner {id,username,name,email} | null      the assignee (see AUTHENTICATION)
   creator {id,username,name,email} | null
   dates {created,modified,moved,started,due,completed}   RFC3339 or null
   time_tracking {spent_hours,estimated_hours}
@@ -240,11 +251,12 @@ JSON FIELDS (top level)
 SEARCH (--search QUERY)
   Runs Kanboard's searchTasks in every active project (or only in the --project
   ones, matched by id or case-insensitive part of the name) and prints one JSON
-  object. QUERY uses the web UI search syntax: plain words match the title and
+  object. With a personal token only the user's own projects are searched.
+  QUERY uses the web UI search syntax: plain words match the title and
   description; filters such as status:open, assignee:<username>, creator:...,
   title:"...", description:..., comment:..., tag:..., column:..., category:...,
-  created:>=2026-01-01 can be combined ("me" does not work: the API user is not a
-  Kanboard user). Without a status: filter both open and closed tasks are returned.
+  created:>=2026-01-01 can be combined ("me", as in assignee:me, works only with a
+  personal token). Without a status: filter both open and closed tasks are returned.
 
   query, projects_searched
   total, truncated              total counts every hit; tasks is cut to --limit
