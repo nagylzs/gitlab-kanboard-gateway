@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +20,11 @@ type Options struct {
 	DownloadDir string
 	// Attachments larger than this are not downloaded (0 = no limit).
 	MaxDownloadBytes int64
+	// Top-level fields to collect (names from TaskFields); empty means all. The API
+	// calls behind the other fields are skipped; SelectFields drops them from the output.
+	Fields []string
+	// Keep only the newest MaxComments comments (0 = all); comments_omitted counts the rest.
+	MaxComments int
 }
 
 // Dumper caches lookups (users, columns, ...) across multiple tasks.
@@ -111,149 +117,180 @@ func (d *Dumper) Dump(taskId int) (*TaskDocument, error) {
 	}
 
 	// --- reference lookups ---
-	if project, err := kanboard.GetProjectById(d.cfg, task.ProjectId); err != nil {
-		warn("getProjectById", err)
-	} else if project != nil {
-		doc.Project = ProjectRef{
-			Id:         int(project.Id),
-			Name:       project.Name,
-			Identifier: project.Identifier,
-			BoardUrl:   project.Url.Board,
+	if d.want("project") {
+		if project, err := kanboard.GetProjectById(d.cfg, task.ProjectId); err != nil {
+			warn("getProjectById", err)
+		} else if project != nil {
+			doc.Project = ProjectRef{
+				Id:         int(project.Id),
+				Name:       project.Name,
+				Identifier: project.Identifier,
+				BoardUrl:   project.Url.Board,
+			}
 		}
 	}
-	if col, err := kanboard.GetColumn(d.cfg, task.ColumnId); err != nil {
-		warn("getColumn", err)
-	} else if col != nil {
-		doc.Column = &NamedRef{Id: int(col.Id), Name: col.Title}
+	if d.want("column") {
+		if col, err := kanboard.GetColumn(d.cfg, task.ColumnId); err != nil {
+			warn("getColumn", err)
+		} else if col != nil {
+			doc.Column = &NamedRef{Id: int(col.Id), Name: col.Title}
+		}
 	}
-	if task.SwimlaneId != 0 {
+	if task.SwimlaneId != 0 && d.want("swimlane") {
 		if sw, err := kanboard.GetSwimlane(d.cfg, task.SwimlaneId); err != nil {
 			warn("getSwimlane", err)
 		} else if sw != nil {
 			doc.Swimlane = &NamedRef{Id: int(sw.Id), Name: sw.Name}
 		}
 	}
-	if task.CategoryId != 0 {
+	if task.CategoryId != 0 && d.want("category") {
 		if cat, err := kanboard.GetCategory(d.cfg, task.CategoryId); err != nil {
 			warn("getCategory", err)
 		} else if cat != nil {
 			doc.Category = &NamedRef{Id: int(cat.Id), Name: cat.Name}
 		}
 	}
-	doc.Owner = d.user(task.OwnerId, task.ProjectId, warn)
-	doc.Creator = d.user(task.CreatorId, task.ProjectId, warn)
+	if d.want("owner") {
+		doc.Owner = d.user(task.OwnerId, task.ProjectId, warn)
+	}
+	if d.want("creator") {
+		doc.Creator = d.user(task.CreatorId, task.ProjectId, warn)
+	}
 
 	// --- tags & metadata ---
-	if tags, err := kanboard.GetTaskTags(d.cfg, taskId); err != nil {
-		warn("getTaskTags", err)
-	} else {
-		for _, name := range tags {
-			doc.Tags = append(doc.Tags, name)
+	if d.want("tags") {
+		if tags, err := kanboard.GetTaskTags(d.cfg, taskId); err != nil {
+			warn("getTaskTags", err)
+		} else {
+			for _, name := range tags {
+				doc.Tags = append(doc.Tags, name)
+			}
 		}
 	}
-	if meta, err := kanboard.GetTaskMetadata(d.cfg, taskId); err != nil {
-		warn("getTaskMetadata", err)
-	} else {
-		doc.Metadata = meta
+	if d.want("metadata") {
+		if meta, err := kanboard.GetTaskMetadata(d.cfg, taskId); err != nil {
+			warn("getTaskMetadata", err)
+		} else {
+			doc.Metadata = meta
+		}
 	}
 
 	// --- subtasks ---
-	if subtasks, err := kanboard.GetAllSubtasks(d.cfg, taskId); err != nil {
-		warn("getAllSubtasks", err)
-	} else {
-		for _, st := range subtasks {
-			doc.Subtasks = append(doc.Subtasks, Subtask{
-				Id:           st.Id,
-				Title:        st.Title,
-				Status:       subtaskStatus(st.Status),
-				Assignee:     userFromParts(st.UserId, st.Username, st.Name),
-				TimeTracking: TimeTracking{SpentHours: st.TimeSpent, EstimatedHours: st.TimeEstimated},
-			})
+	if d.want("subtasks") {
+		if subtasks, err := kanboard.GetAllSubtasks(d.cfg, taskId); err != nil {
+			warn("getAllSubtasks", err)
+		} else {
+			for _, st := range subtasks {
+				doc.Subtasks = append(doc.Subtasks, Subtask{
+					Id:           st.Id,
+					Title:        st.Title,
+					Status:       subtaskStatus(st.Status),
+					Assignee:     userFromParts(st.UserId, st.Username, st.Name),
+					TimeTracking: TimeTracking{SpentHours: st.TimeSpent, EstimatedHours: st.TimeEstimated},
+				})
+			}
 		}
 	}
 
 	// --- attachments (before comments: comment text may embed them) ---
 	attByID := make(map[int]*Attachment)
-	if files, err := kanboard.GetAllTaskFiles(d.cfg, taskId); err != nil {
-		warn("getAllTaskFiles", err)
-	} else {
-		for _, f := range files {
-			att := Attachment{
-				Id:         f.Id,
-				Name:       f.Name,
-				SizeBytes:  f.Size,
-				IsImage:    f.IsImage,
-				Uploaded:   tsPtr(f.Date),
-				UploadedBy: userFromParts(f.UserId, f.Username, f.UserName),
+	if d.want("attachments") || d.want("comments") {
+		if files, err := kanboard.GetAllTaskFiles(d.cfg, taskId); err != nil {
+			warn("getAllTaskFiles", err)
+		} else {
+			for _, f := range files {
+				att := Attachment{
+					Id:         f.Id,
+					Name:       f.Name,
+					SizeBytes:  f.Size,
+					IsImage:    f.IsImage,
+					Uploaded:   tsPtr(f.Date),
+					UploadedBy: userFromParts(f.UserId, f.Username, f.UserName),
+				}
+				if d.opts.DownloadDir != "" && d.want("attachments") {
+					d.download(taskId, f, &att)
+				}
+				doc.Attachments = append(doc.Attachments, att)
+				attByID[att.Id] = &doc.Attachments[len(doc.Attachments)-1]
 			}
-			if d.opts.DownloadDir != "" {
-				d.download(taskId, f, &att)
-			}
-			doc.Attachments = append(doc.Attachments, att)
-			attByID[att.Id] = &doc.Attachments[len(doc.Attachments)-1]
 		}
 	}
 
 	// --- comments ---
-	if comments, err := kanboard.GetAllComments(d.cfg, taskId); err != nil {
-		warn("getAllComments", err)
-	} else {
-		for _, c := range comments {
-			cm := Comment{
-				Id:         c.Id,
-				Created:    tsPtr(c.DateCreation),
-				Modified:   tsPtr(c.DateModification),
-				Author:     UserRef{Id: c.UserId, Username: c.Username, Name: c.Name, Email: c.Email},
-				Visibility: c.Visibility,
+	if d.want("comments") {
+		if comments, err := kanboard.GetAllComments(d.cfg, taskId); err != nil {
+			warn("getAllComments", err)
+		} else {
+			for _, c := range comments {
+				cm := Comment{
+					Id:         c.Id,
+					Created:    tsPtr(c.DateCreation),
+					Modified:   tsPtr(c.DateModification),
+					Author:     UserRef{Id: c.UserId, Username: c.Username, Name: c.Name, Email: c.Email},
+					Visibility: c.Visibility,
+				}
+				cm.Content, cm.AttachmentIds = rewriteEmbeddedFiles(c.Comment, appBaseUrl(d.cfg.ApiUrl), attByID)
+				doc.Comments = append(doc.Comments, cm)
 			}
-			cm.Content, cm.AttachmentIds = rewriteEmbeddedFiles(c.Comment, appBaseUrl(d.cfg.ApiUrl), attByID)
-			doc.Comments = append(doc.Comments, cm)
+			if n := d.opts.MaxComments; n > 0 && len(doc.Comments) > n {
+				doc.CommentsOmitted = len(doc.Comments) - n
+				doc.Comments = doc.Comments[len(doc.Comments)-n:]
+			}
 		}
 	}
 
 	// --- links ---
-	if links, err := kanboard.GetAllTaskLinks(d.cfg, taskId); err != nil {
-		warn("getAllTaskLinks", err)
-	} else {
-		for _, l := range links {
-			doc.Links = append(doc.Links, Link{
-				Id:       l.Id,
-				Relation: l.Label,
-				Task: LinkedTask{
-					Id:       l.TaskId,
-					Title:    l.Title,
-					Status:   openClosed(l.IsActive),
-					Project:  NamedRef{Id: l.ProjectId, Name: l.ProjectName},
-					Column:   l.ColumnTitle,
-					Assignee: userFromParts(l.TaskAssigneeId, l.TaskAssigneeUsername, l.TaskAssigneeName),
-					Dates: LinkedDates{
-						Started:   tsPtr(l.DateStarted),
-						Due:       tsPtr(l.DateDue),
-						Completed: tsPtr(l.DateCompleted),
+	if d.want("links") {
+		if links, err := kanboard.GetAllTaskLinks(d.cfg, taskId); err != nil {
+			warn("getAllTaskLinks", err)
+		} else {
+			for _, l := range links {
+				doc.Links = append(doc.Links, Link{
+					Id:       l.Id,
+					Relation: l.Label,
+					Task: LinkedTask{
+						Id:       l.TaskId,
+						Title:    l.Title,
+						Status:   openClosed(l.IsActive),
+						Project:  NamedRef{Id: l.ProjectId, Name: l.ProjectName},
+						Column:   l.ColumnTitle,
+						Assignee: userFromParts(l.TaskAssigneeId, l.TaskAssigneeUsername, l.TaskAssigneeName),
+						Dates: LinkedDates{
+							Started:   tsPtr(l.DateStarted),
+							Due:       tsPtr(l.DateDue),
+							Completed: tsPtr(l.DateCompleted),
+						},
+						TimeTracking: TimeTracking{SpentHours: l.TaskTimeSpent, EstimatedHours: l.TaskTimeEstimated},
 					},
-					TimeTracking: TimeTracking{SpentHours: l.TaskTimeSpent, EstimatedHours: l.TaskTimeEstimated},
-				},
-			})
+				})
+			}
 		}
 	}
-	if ext, err := kanboard.GetAllExternalTaskLinks(d.cfg, taskId); err != nil {
-		warn("getAllExternalTaskLinks", err)
-	} else {
-		for _, l := range ext {
-			doc.ExternalLinks = append(doc.ExternalLinks, ExternalLink{
-				Id:       l.Id,
-				Type:     l.LinkType,
-				Relation: l.Dependency,
-				Title:    l.Title,
-				Url:      l.Url,
-				Created:  tsPtr(l.DateCreation),
-				Modified: tsPtr(l.DateModification),
-				Creator:  userFromParts(l.CreatorId, l.CreatorUsername, l.CreatorName),
-			})
+	if d.want("external_links") {
+		if ext, err := kanboard.GetAllExternalTaskLinks(d.cfg, taskId); err != nil {
+			warn("getAllExternalTaskLinks", err)
+		} else {
+			for _, l := range ext {
+				doc.ExternalLinks = append(doc.ExternalLinks, ExternalLink{
+					Id:       l.Id,
+					Type:     l.LinkType,
+					Relation: l.Dependency,
+					Title:    l.Title,
+					Url:      l.Url,
+					Created:  tsPtr(l.DateCreation),
+					Modified: tsPtr(l.DateModification),
+					Creator:  userFromParts(l.CreatorId, l.CreatorUsername, l.CreatorName),
+				})
+			}
 		}
 	}
 
 	return doc, nil
+}
+
+// want reports whether a top-level field was requested (no Options.Fields = all).
+func (d *Dumper) want(field string) bool {
+	return len(d.opts.Fields) == 0 || slices.Contains(d.opts.Fields, field)
 }
 
 func (d *Dumper) download(taskId int, f kanboard.KbResponseTaskFile, att *Attachment) {

@@ -39,11 +39,13 @@ type TaskDocument struct {
 	Recurrence   *Recurrence       `json:"recurrence,omitempty"`
 	External     *ExternalTask     `json:"external_task,omitempty"`
 
-	Subtasks      []Subtask      `json:"subtasks"`
-	Comments      []Comment      `json:"comments"`
-	Attachments   []Attachment   `json:"attachments"`
-	Links         []Link         `json:"links"`          // internal task-to-task links
-	ExternalLinks []ExternalLink `json:"external_links"` // URLs attached to the task
+	Subtasks []Subtask `json:"subtasks"`
+	Comments []Comment `json:"comments"`
+	// Number of older comments left out because of Options.MaxComments.
+	CommentsOmitted int            `json:"comments_omitted,omitempty"`
+	Attachments     []Attachment   `json:"attachments"`
+	Links           []Link         `json:"links"`          // internal task-to-task links
+	ExternalLinks   []ExternalLink `json:"external_links"` // URLs attached to the task
 
 	// Non-fatal problems encountered while collecting the sub-resources
 	// (e.g. a failed API call); the rest of the document is still valid.

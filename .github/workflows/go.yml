@@ -43,6 +43,12 @@ jobs:
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
           -o kanboard-task \
           cmd/kanboard-task/kanboard-task.go
+        go build -ldflags " \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
+          -o kanboard-mcp \
+          cmd/kanboard-mcp/kanboard-mcp.go
 
     - name: 'Upload Linux Artifact'
       uses: actions/upload-artifact@v7
@@ -51,6 +57,7 @@ jobs:
         path: |
           gitlab-kanboard-gateway
           kanboard-task
+          kanboard-mcp
         retention-days: 5
 
     - name: Build Windows Amd64
@@ -70,6 +77,12 @@ jobs:
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
           -o kanboard-task.exe \
           cmd/kanboard-task/kanboard-task.go
+        go build -ldflags " \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
+          -o kanboard-mcp.exe \
+          cmd/kanboard-mcp/kanboard-mcp.go
 
     - name: 'Upload Windows Artifact'
       uses: actions/upload-artifact@v7
@@ -78,4 +91,5 @@ jobs:
         path: |
           gitlab-kanboard-gateway.exe
           kanboard-task.exe
+          kanboard-mcp.exe
         retention-days: 5

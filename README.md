@@ -3,12 +3,13 @@
 Connects GitLab to [Kanboard](https://kanboard.org/): when someone pushes commits whose messages reference
 Kanboard tasks, a comment with the commit details is added to each referenced task.
 
-The repository builds two programs:
+The repository builds three programs:
 
 | Binary                    | Purpose                                                                                        |
 |---------------------------|------------------------------------------------------------------------------------------------|
 | `gitlab-kanboard-gateway` | Background service. Receives GitLab *push* webhooks and creates Kanboard comments from them.   |
 | `kanboard-task`           | Command-line tool. Dumps a Kanboard task as JSON, read-only. Made for AI agents and scripts.   |
+| `kanboard-mcp`            | MCP server. Gives AI agents the same read-only access to Kanboard tasks as MCP tools.          |
 
 ## How the gateway works
 
@@ -29,7 +30,7 @@ Only push events are supported. Other webhook event types are rejected with HTTP
 
 * A GitLab instance that can reach the gateway over HTTP.
 * A Kanboard instance with the API enabled (Settings → API).
-* Go 1.22 or newer, if you build from source.
+* Go 1.25 or newer, if you build from source.
 
 ### Compatibility
 
@@ -58,6 +59,7 @@ Or simply:
 ```bash
 go build ./cmd/gitlab-kanboard-gateway
 go build ./cmd/kanboard-task
+go build ./cmd/kanboard-mcp
 ```
 
 ## Setup
@@ -237,6 +239,42 @@ Logs go to stderr; stdout carries only JSON. Exit codes:
 | 2    | A task does not exist (others are still printed)     |
 | 3    | Kanboard API error                                   |
 
+## kanboard-mcp: MCP server for AI agents
+
+`kanboard-mcp` is an [MCP](https://modelcontextprotocol.io/) server that gives AI agents read-only access
+to Kanboard. It returns the same data as `kanboard-task`, but as MCP tools. It speaks MCP over stdin/stdout,
+so an MCP client starts it as a subprocess. It uses the same configuration file as `kanboard-task` (only
+`Kanboard.ApiUrl`, `Kanboard.Username` and `Kanboard.Password`), and the same `KANBOARD_TASK_CONFIG`
+environment variable.
+
+To use it from Claude Code:
+
+```bash
+claude mcp add kanboard -- /path/to/kanboard-mcp -c /path/to/config.yml
+```
+
+For an agent that works on behalf of one person, that person's personal access token is the better fit
+(see the personal access token notes in the `kanboard-task` section): the agent then sees exactly what that
+person can see, and
+`assignee:me` works in searches.
+
+| Tool             | Arguments                                                     | Returns                                                     |
+|------------------|---------------------------------------------------------------|-------------------------------------------------------------|
+| `get_task`       | `tasks` (ids, `#KB123` or URLs), `fields`, `max_comments`     | JSON array, one `kanboard-task` document per task           |
+| `search_tasks`   | `query`, `projects`, `include_inactive`, `limit` (default 50) | the `kanboard-task --search` JSON object                    |
+| `get_attachment` | `file_id`                                                     | an image (png, jpeg, gif, webp), or text (first 100 KiB)    |
+
+* `fields` limits a task to the listed top-level fields (`id` and `warnings` are always included). The API
+  calls behind the other fields are skipped, so this is also faster. `max_comments` keeps only the newest
+  N comments, and `comments_omitted` tells how many older ones were left out. Both help keep large tickets
+  from filling the agent's context.
+* A task that cannot be loaded is returned as `{"id": N, "error": "..."}` among the others; if every
+  requested task fails, the call is a tool error. Errors carry a message the agent can act on.
+* Screenshots pasted into comments are listed in the comment's `attachment_ids`; `get_attachment` returns
+  them as images, so the agent can look at them. Files larger than `--max-attachment-bytes` (default 5 MiB)
+  and other file types are refused.
+* `kanboard-mcp --info` describes the tools and lists the field names.
+
 ## Development
 
 ```bash
@@ -245,7 +283,7 @@ go vet ./...        # static checks
 go test ./...       # unit tests
 ```
 
-Both binaries take their `--version` information from `-ldflags -X` values set by `scripts/build.sh` and by
+All binaries take their `--version` information from `-ldflags -X` values set by `scripts/build.sh` and by
 the GitHub Actions workflow.
 
 ## License

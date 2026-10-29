@@ -4,14 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Two Go binaries sharing one config file and one Kanboard JSON-RPC client, no database, no deps beyond
-`go-flags` and `yaml.v3`:
+Three Go binaries sharing one config file and one Kanboard JSON-RPC client, no database. Dependencies:
+`go-flags` and `yaml.v3`, plus the official MCP Go SDK (`modelcontextprotocol/go-sdk`, with `jsonschema-go`) for
+`kanboard-mcp`. The SDK is why `go.mod` requires Go 1.25.
 
 - **`gitlab-kanboard-gateway`** (daemon): receives GitLab **push** webhook events over HTTP, scans commit
   messages for Kanboard task references (configurable regexps), and posts a comment on each referenced task.
 - **`kanboard-task`** (CLI, read-only): dumps one or more tasks as agent-friendly JSON (description, comments,
   attachments, subtasks, links, resolved names). Built for AI agents that need to read tickets. It must never
   call a Kanboard procedure that modifies data.
+- **`kanboard-mcp`** (MCP server over stdio, read-only): the same data as MCP tools `get_task` (with `fields`
+  and `max_comments`), `search_tasks` and `get_attachment`. Same read-only rule as `kanboard-task`.
 
 ## Commands
 
@@ -22,14 +25,19 @@ go run ./cmd/gitlab-kanboard-gateway -v -c config.yml   # run locally (needs a r
 go run ./cmd/gitlab-kanboard-gateway --info             # prints example config + template arg docs, then exits
 go run ./cmd/kanboard-task -c assets/config.yml 13670   # dump a task as JSON (read-only, safe to run)
 go run ./cmd/kanboard-task --info                       # documents every output field
+go run ./cmd/kanboard-mcp --info                        # documents the MCP tools
 ./scripts/build.sh             # build for host OS/arch into dist/<os>/<arch>/ with version ldflags
 ./scripts/build.sh all         # cross-build linux+windows x amd64+386 into dist/
+go test ./...                  # unit tests (taskdump) + MCP tool tests against a fake Kanboard (mcpserver)
 ```
 
-The only tests are in `internal/taskdump` (`go test ./internal/taskdump/ -run TestRewriteEmbeddedFiles`). CI (`.github/workflows/go.yml`) only builds
+Tests: `internal/taskdump` (`TestRewriteEmbeddedFiles`) and `internal/mcpserver`, which connects an SDK client
+over in-memory transports to the server, backed by an `httptest` fake of the Kanboard JSON-RPC endpoint (no
+network, no credentials). CI (`.github/workflows/go.yml`) does not run tests and only builds
 linux/amd64 and windows/amd64 with the same `-ldflags -X ...internal/version.{Built,Commit,Branch}` pattern that
 `scripts/build.sh` uses. If you add a version field or a new `cmd/`, update both (the `cmds=` list in the
-script and the per-binary build steps in the workflow).
+script and the per-binary build steps in the workflow). Both build `cmd/<name>/<name>.go` as a single file, so
+each `cmd/` package must stay one file; put the logic in `internal/`.
 
 `assets/config.yml` (a symlink to the developer's real config) points at a live Kanboard server. It is fine to use
 it for **read-only** probing (`getTask`, `getAllComments`, ...) while developing, but never call a procedure that
@@ -97,6 +105,15 @@ Supporting packages:
   with a personal token), merged into a `SearchResult` (`model.go`) sorted by
   modification time. `comments.go` rewrites the relative `<img src="?controller=FileViewerController...">` tags Kanboard inserts
   for pasted screenshots into markdown images (attachments are therefore collected before comments).
+  `Options.Fields` skips the API calls behind unrequested top-level fields (`Dumper.want`), and
+  `Options.MaxComments` keeps the newest N comments and sets `comments_omitted`. `select.go` derives
+  `TaskFields` from the `TaskDocument` json tags (so new model fields become selectable automatically) and
+  `SelectFields` encodes only the selected keys in model order; `MarshalJSON` is the non-HTML-escaping encoder.
+- **`internal/mcpserver`** – the `kanboard-mcp` tools on top of `taskdump`. Each call builds its own `Dumper`
+  (calls may run concurrently). Handler errors become MCP tool errors (`IsError`), not protocol errors, so
+  the agent sees the message. Results are compact JSON text content, no `outputSchema` (field selection makes
+  the shape variable). The `fields` enum and other constraints are patched into the schema that
+  `jsonschema.For` infers, because struct tags can only carry descriptions.
 - **`internal/webhooks`** – GitLab push-event payload structs (`pushevent.go`, field comments show example
   values) and the shared `PushQueue`.
 
