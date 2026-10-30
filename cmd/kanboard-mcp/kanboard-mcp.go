@@ -30,7 +30,7 @@ const (
 )
 
 type opts struct {
-	ConfigFile         string `short:"c" long:"config" description:"Config file path (only the Kanboard section is used)" env:"KANBOARD_TASK_CONFIG"`
+	ConfigFile         string `short:"c" long:"config" description:"Config file path (only the Kanboard section is used); can also be given as the argument" env:"KANBOARD_TASK_CONFIG"`
 	MaxAttachmentBytes int64  `long:"max-attachment-bytes" description:"get_attachment refuses larger files (0 = no limit)" default:"5242880"`
 	DownloadDir        string `short:"o" long:"download-dir" description:"download_attachments saves files into DIR/<task-id>/ (default: kanboard-mcp/attachments in the user cache directory)" value-name:"DIR"`
 	MaxDownloadBytes   int64  `long:"max-download-bytes" description:"download_attachments skips larger files (0 = no limit)" default:"20971520"`
@@ -43,13 +43,23 @@ type opts struct {
 func main() {
 	var o opts
 	parser := flags.NewParser(&o, flags.Default)
-	parser.Usage = "-c config.yml [OPTIONS]"
-	if _, err := parser.Parse(); err != nil {
+	parser.Usage = "[OPTIONS] config.yml"
+	args, err := parser.Parse()
+	if err != nil {
 		var fe *flags.Error
 		if errors.As(err, &fe) && fe.Type == flags.ErrHelp {
 			os.Exit(exitOk)
 		}
 		os.Exit(exitUsage)
+	}
+	if len(args) > 1 {
+		fmt.Fprintf(os.Stderr, "error: only one config file can be given, got %q\n", args)
+		os.Exit(exitUsage)
+	}
+	if len(args) == 1 {
+		// Given as an argument, the config file needs no "-c", so "claude mcp add"
+		// needs no "--" before the command (PowerShell drops a bare "--").
+		o.ConfigFile = args[0]
 	}
 	if o.ShowVersion {
 		version.PrintVersion()
@@ -132,13 +142,17 @@ func wrap(s string, width int, indent string) string {
 const infoText = `kanboard-mcp - MCP server with read-only access to Kanboard tasks
 
 USAGE
-  kanboard-mcp -c config.yml [--max-attachment-bytes N] [-o DIR] [--max-download-bytes N] [-v]
+  kanboard-mcp [-c] config.yml [--max-attachment-bytes N] [-o DIR] [--max-download-bytes N] [-v]
 
   Speaks MCP over stdin/stdout, so it is started by an MCP client. For Claude Code:
-    claude mcp add kanboard -- kanboard-mcp -c /path/to/config.yml
+    claude mcp add kanboard /path/to/kanboard-mcp /path/to/config.yml
   The config file is the same YAML as for kanboard-task; only Kanboard.ApiUrl,
-  Kanboard.Username and Kanboard.Password are read. The path can also be given
-  via the KANBOARD_TASK_CONFIG environment variable. Logs go to stderr.
+  Kanboard.Username and Kanboard.Password are read. It can be given as the
+  argument, with -c, or via the KANBOARD_TASK_CONFIG environment variable.
+  Options of kanboard-mcp (-o, ...) need "--" before the command, typed as two
+  plain hyphens (a dash copied from a document does not work):
+    claude mcp add kanboard -- /path/to/kanboard-mcp -o DIR /path/to/config.yml
+  Logs go to stderr.
 
 AUTHENTICATION
   As for kanboard-task (see kanboard-task --info): Username "jsonrpc" with the

@@ -250,8 +250,33 @@ environment variable.
 To use it from Claude Code:
 
 ```bash
-claude mcp add kanboard -- /path/to/kanboard-mcp -c /path/to/config.yml
+claude mcp add kanboard /path/to/kanboard-mcp /path/to/config.yml
 ```
+
+On Windows, in PowerShell (`-s user` makes it available in every project):
+
+```powershell
+claude mcp add kanboard -s user "$env:USERPROFILE\.local\bin\kanboard-mcp.exe" "C:\path\to\config.yml"
+```
+
+The config file can also be given with `-c`, or in the `KANBOARD_TASK_CONFIG` environment variable. Options of
+`kanboard-mcp` itself, such as `-o DIR`, need a `--` before the command, otherwise `claude` takes them as its
+own and stops with `error: unknown option`:
+
+```bash
+claude mcp add kanboard -- /path/to/kanboard-mcp -o /path/to/downloads /path/to/config.yml
+```
+
+Type that `--` as two plain hyphens. Word, Outlook, Teams and the like turn a copied `--` into a dash (`–`),
+which `claude` does not recognize. In cmd.exe write `--` or `"--"`, never `'--'`. If `claude` was installed
+with npm (a `claude.ps1` script), PowerShell drops a bare `--`, so write `'--'` there.
+
+If `/mcp` shows `CONNECTION_CLOSED`, start `claude --debug` and look for the server's stderr in the debug log.
+On Windows, `'-' is not recognized as an internal or external command` means that the `"command"` of the
+`kanboard` entry in `~/.claude.json` is a dash (cmd.exe shows `–` as `-`) instead of the path of
+`kanboard-mcp`; `'--' is not recognized` means it is `--`. Remove the entry (`claude mcp remove kanboard`, with
+the same `-s` as when it was added) and add it again. Running the command and arguments of the entry in a
+terminal shows any other startup error; if it just waits for input, the server itself is fine.
 
 For an agent that works on behalf of one person, that person's personal access token is the better fit
 (see the personal access token notes in the `kanboard-task` section): the agent then sees exactly what that
