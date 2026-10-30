@@ -3,11 +3,7 @@ package taskdump
 import (
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"regexp"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/nagylzs/gitlab-kanboard-gateway/internal/config"
@@ -294,31 +290,13 @@ func (d *Dumper) want(field string) bool {
 }
 
 func (d *Dumper) download(taskId int, f kanboard.KbResponseTaskFile, att *Attachment) {
-	if d.opts.MaxDownloadBytes > 0 && f.Size > d.opts.MaxDownloadBytes {
-		att.DownloadError = fmt.Sprintf("skipped: size %v exceeds limit %v bytes", f.Size, d.opts.MaxDownloadBytes)
-		return
-	}
-	dir := filepath.Join(d.opts.DownloadDir, fmt.Sprintf("%v", taskId))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		att.DownloadError = err.Error()
-		return
-	}
-	target := filepath.Join(dir, fmt.Sprintf("%v-%v", f.Id, sanitizeFileName(f.Name)))
-	data, err := kanboard.DownloadTaskFile(d.cfg, f.Id)
+	saved, err := SaveAttachment(d.cfg, d.opts.DownloadDir, d.opts.MaxDownloadBytes, taskId, f)
 	if err != nil {
 		att.DownloadError = err.Error()
 		return
 	}
-	if err := os.WriteFile(target, data, 0o644); err != nil {
-		att.DownloadError = err.Error()
-		return
-	}
-	abs, err := filepath.Abs(target)
-	if err != nil {
-		abs = target
-	}
-	att.LocalPath = abs
-	slog.Info("downloaded attachment", "task_id", taskId, "file_id", f.Id, "path", abs, "bytes", len(data))
+	att.LocalPath = saved.Path
+	slog.Info("downloaded attachment", "task_id", taskId, "file_id", f.Id, "path", saved.Path, "bytes", saved.Size)
 }
 
 // user resolves a user id via the API (cached). Id 0 means "nobody".
@@ -438,16 +416,4 @@ func anyToIntPtr(v interface{}) *int {
 		return &x
 	}
 	return nil
-}
-
-var unsafeFileChars = regexp.MustCompile(`[^\p{L}\p{N}._ -]+`)
-
-func sanitizeFileName(name string) string {
-	// keep the whole name (Kanboard allows "/" in names), just make it safe
-	name = unsafeFileChars.ReplaceAllString(name, "_")
-	name = strings.Trim(name, ". ")
-	if name == "" {
-		return "file"
-	}
-	return name
 }

@@ -258,11 +258,12 @@ For an agent that works on behalf of one person, that person's personal access t
 person can see, and
 `assignee:me` works in searches.
 
-| Tool             | Arguments                                                     | Returns                                                     |
-|------------------|---------------------------------------------------------------|-------------------------------------------------------------|
-| `get_task`       | `tasks` (ids, `#KB123` or URLs), `fields`, `max_comments`     | JSON array, one `kanboard-task` document per task           |
-| `search_tasks`   | `query`, `projects`, `include_inactive`, `limit` (default 50) | the `kanboard-task --search` JSON object                    |
-| `get_attachment` | `file_id`                                                     | an image (png, jpeg, gif, webp), or text (first 100 KiB)    |
+| Tool                   | Arguments                                                     | Returns                                                  |
+|------------------------|---------------------------------------------------------------|----------------------------------------------------------|
+| `get_task`             | `tasks` (ids, `#KB123` or URLs), `fields`, `max_comments`     | JSON array, one `kanboard-task` document per task        |
+| `search_tasks`         | `query`, `projects`, `include_inactive`, `limit` (default 50) | the `kanboard-task --search` JSON object                 |
+| `get_attachment`       | `file_id`                                                     | an image (png, jpeg, gif, webp), or text (first 100 KiB) |
+| `download_attachments` | `tasks` (every attachment of these tasks), `file_ids`         | the local paths of the saved files, and what was skipped |
 
 * `fields` limits a task to the listed top-level fields (`id` and `warnings` are always included). The API
   calls behind the other fields are skipped, so this is also faster. `max_comments` keeps only the newest
@@ -273,6 +274,15 @@ person can see, and
 * Screenshots pasted into comments are listed in the comment's `attachment_ids`; `get_attachment` returns
   them as images, so the agent can look at them. Files larger than `--max-attachment-bytes` (default 5 MiB)
   and other file types are refused.
+* `download_attachments` saves attachments of any type (docx, pdf, xlsx, zip, ...) as
+  `DIR/<task id>/<file id>-<name>`, the same layout as `kanboard-task -o`, and returns for each file its
+  `local_path`, `name`, `size_bytes` and `mime_type`, plus a `skipped` list with the reason (too large, not
+  found, no access). The agent then reads or copies the files with its own tools. `DIR` is chosen when the
+  server starts, never by the agent: `-o`/`--download-dir`, by default `kanboard-mcp\attachments` under
+  `%LocalAppData%` on Windows and `~/.cache/kanboard-mcp/attachments` on Linux. Attachment names are made
+  safe for Windows and Unix file systems, and the files are written so that neither a name nor a symlink
+  or junction inside `DIR` can lead outside it. Files larger than `--max-download-bytes` (default 20 MiB)
+  are skipped. This is the only tool that writes anything, and it writes nothing to Kanboard.
 * `kanboard-mcp --info` describes the tools and lists the field names.
 
 ## Development

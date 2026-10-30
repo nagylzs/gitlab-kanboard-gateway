@@ -14,7 +14,10 @@ Three Go binaries sharing one config file and one Kanboard JSON-RPC client, no d
   attachments, subtasks, links, resolved names). Built for AI agents that need to read tickets. It must never
   call a Kanboard procedure that modifies data.
 - **`kanboard-mcp`** (MCP server over stdio, read-only): the same data as MCP tools `get_task` (with `fields`
-  and `max_comments`), `search_tasks` and `get_attachment`. Same read-only rule as `kanboard-task`.
+  and `max_comments`), `search_tasks`, `get_attachment` and `download_attachments`. Same read-only rule as
+  `kanboard-task`. `download_attachments` is the only tool that writes, and only local files below the
+  server's `--download-dir` (default `kanboard-mcp/attachments` in the user cache dir); the agent never
+  chooses a path.
 
 ## Commands
 
@@ -31,7 +34,7 @@ go run ./cmd/kanboard-mcp --info                        # documents the MCP tool
 go test ./...                  # unit tests (taskdump) + MCP tool tests against a fake Kanboard (mcpserver)
 ```
 
-Tests: `internal/taskdump` (`TestRewriteEmbeddedFiles`) and `internal/mcpserver`, which connects an SDK client
+Tests: `internal/taskdump` (`TestRewriteEmbeddedFiles`, `TestSanitizeFileName*`) and `internal/mcpserver`, which connects an SDK client
 over in-memory transports to the server, backed by an `httptest` fake of the Kanboard JSON-RPC endpoint (no
 network, no credentials). CI (`.github/workflows/go.yml`) does not run tests and only builds
 linux/amd64 and windows/amd64 with the same `-ldflags -X ...internal/version.{Built,Commit,Branch}` pattern that
@@ -98,7 +101,9 @@ Supporting packages:
   in the binary's `--info` text; keep the two in sync), `dump.go` does the ~12 read calls per task, resolves
   ids to names (users cached per `Dumper`; when `getUser` is forbidden, display names come from
   `getProjectUsers`), converts unix timestamps to RFC3339 and optionally downloads
-  attachments to `<dir>/<taskId>/<fileId>-<name>`. A failing `getTask` is fatal; any other failed call is
+  attachments to `<dir>/<taskId>/<fileId>-<name>` (`download.go`: `SaveAttachment`, shared with
+  `download_attachments`; it sanitizes the uploader-chosen name for Windows and Unix and writes through an
+  `os.Root`, so neither the name nor a symlink/junction can escape `<dir>`). A failing `getTask` is fatal; any other failed call is
   appended to `warnings` and the document is still emitted. `parse_id.go` accepts numbers, `#KB123`, and task URLs.
   `search.go` implements `--search`: `searchTasks` per project (the API has no global search), run in parallel
   over the active or `--project`-selected projects (`getAllProjects` with the `jsonrpc` token, `getMyProjects`

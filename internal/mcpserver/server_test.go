@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -47,12 +49,13 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 24)...)
 	files := map[int]string{
-		5: `{"id":5,"name":"shot.png","is_image":true,"task_id":1,"size":32}`,
-		6: `{"id":6,"name":"build.log","task_id":1,"size":11}`,
-		7: `{"id":7,"name":"huge.png","is_image":true,"task_id":1,"size":5000}`,
-		8: `{"id":8,"name":"logs.zip","task_id":1,"size":8}`,
+		5:  `{"id":5,"name":"shot.png","is_image":true,"task_id":1,"size":32}`,
+		6:  `{"id":6,"name":"build.log","task_id":1,"size":11}`,
+		7:  `{"id":7,"name":"huge.png","is_image":true,"task_id":1,"size":5000}`,
+		8:  `{"id":8,"name":"logs.zip","task_id":1,"size":8}`,
+		10: `{"id":10,"name":"..\\..\\evil:name?.txt. ","task_id":1,"size":4}`,
 	}
-	contents := map[int][]byte{5: png, 6: []byte("hello build"), 8: []byte("PK\x03\x04\x00\x00\x00\x00")}
+	contents := map[int][]byte{5: png, 6: []byte("hello build"), 8: []byte("PK\x03\x04\x00\x00\x00\x00"), 10: []byte("evil")}
 
 	result := "null"
 	switch req.Method {
@@ -72,6 +75,10 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s, ok := files[param("file_id")]; ok {
 			result = s
 		}
+	case "getAllTaskFiles":
+		if param("task_id") == 1 {
+			result = "[" + files[5] + "," + files[6] + "," + files[7] + "," + files[8] + "," + files[10] + "]"
+		}
 	case "downloadTaskFile":
 		result = fmt.Sprintf("%q", base64.StdEncoding.EncodeToString(contents[param("file_id")]))
 	default:
@@ -84,6 +91,11 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func connect(t *testing.T) (*mcp.ClientSession, *fakeKanboard) {
 	t.Helper()
+	return connectOpts(t, Options{Version: "test", MaxAttachmentBytes: 1000, DownloadDir: t.TempDir(), MaxDownloadBytes: 1000})
+}
+
+func connectOpts(t *testing.T, opts Options) (*mcp.ClientSession, *fakeKanboard) {
+	t.Helper()
 	fake := &fakeKanboard{}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
@@ -91,7 +103,7 @@ func connect(t *testing.T) (*mcp.ClientSession, *fakeKanboard) {
 
 	ctx := context.Background()
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	server := New(cfg, Options{Version: "test", MaxAttachmentBytes: 1000})
+	server := New(cfg, opts)
 	if _, err := server.Connect(ctx, serverTransport, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +142,12 @@ func TestListTools(t *testing.T) {
 	var names []string
 	for _, tool := range res.Tools {
 		names = append(names, tool.Name)
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+		if tool.Name == "download_attachments" {
+			// It writes local files, but never deletes or changes anything else.
+			if a := tool.Annotations; a == nil || a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint {
+				t.Errorf("download_attachments must be marked as not read-only and not destructive: %#v", a)
+			}
+		} else if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 			t.Errorf("%v is not marked read-only", tool.Name)
 		}
 		if tool.Name == "get_task" {
@@ -141,7 +158,7 @@ func TestListTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	if want := []string{"get_attachment", "get_task", "search_tasks"}; !slices.Equal(names, want) {
+	if want := []string{"download_attachments", "get_attachment", "get_task", "search_tasks"}; !slices.Equal(names, want) {
 		t.Errorf("tools = %v, want %v", names, want)
 	}
 }
@@ -215,6 +232,8 @@ func TestToolErrors(t *testing.T) {
 		{"get_attachment", map[string]any{"file_id": 7}, "more than the 1000 bytes"},
 		{"get_attachment", map[string]any{"file_id": 8}, "cannot be shown"},
 		{"get_attachment", map[string]any{"file_id": 9}, "not found"},
+		{"download_attachments", map[string]any{}, "give tasks, file_ids or both"},
+		{"download_attachments", map[string]any{"tasks": []string{"abc"}}, "abc"},
 	}
 	for _, c := range cases {
 		res, text := call(t, session, c.tool, c.args)
@@ -255,5 +274,114 @@ func TestGetAttachment(t *testing.T) {
 	res, _ = call(t, session, "get_attachment", map[string]any{"file_id": 6})
 	if text, ok := res.Content[1].(*mcp.TextContent); res.IsError || !ok || text.Text != "hello build" {
 		t.Errorf("want the text file content, got %#v", res.Content)
+	}
+}
+
+type downloadOutput struct {
+	Directory string
+	Files     []struct {
+		FileId    int    `json:"file_id"`
+		TaskId    int    `json:"task_id"`
+		SizeBytes int    `json:"size_bytes"`
+		MimeType  string `json:"mime_type"`
+		LocalPath string `json:"local_path"`
+	}
+	Skipped []struct {
+		FileId int `json:"file_id"`
+		TaskId int `json:"task_id"`
+		Reason string
+	}
+}
+
+func download(t *testing.T, session *mcp.ClientSession, args map[string]any) downloadOutput {
+	t.Helper()
+	res, text := call(t, session, "download_attachments", args)
+	if res.IsError {
+		t.Fatal(text)
+	}
+	var out downloadOutput
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("%v: %s", err, text)
+	}
+	return out
+}
+
+func TestDownloadAttachments(t *testing.T) {
+	dir := t.TempDir()
+	session, fake := connectOpts(t, Options{DownloadDir: dir, MaxDownloadBytes: 1000})
+	out := download(t, session, map[string]any{"tasks": []string{"#KB1", "2"}, "file_ids": []int{5, 9}})
+	if !fake.called("getTaskFile") {
+		t.Error("file_ids must be looked up with getTaskFile")
+	}
+	if out.Directory != dir {
+		t.Errorf("directory = %q, want %q", out.Directory, dir)
+	}
+
+	// File 5 comes both from task 1 and from file_ids, and is saved once.
+	want := map[int]string{
+		5:  filepath.Join(dir, "1", "5-shot.png"),
+		6:  filepath.Join(dir, "1", "6-build.log"),
+		8:  filepath.Join(dir, "1", "8-logs.zip"),
+		10: filepath.Join(dir, "1", "10-_.._evil_name_.txt"),
+	}
+	if len(out.Files) != len(want) {
+		t.Errorf("saved %d files, want %d: %+v", len(out.Files), len(want), out.Files)
+	}
+	for _, f := range out.Files {
+		if f.LocalPath != want[f.FileId] || f.TaskId != 1 {
+			t.Errorf("file %v saved as %q (task %v), want %q", f.FileId, f.LocalPath, f.TaskId, want[f.FileId])
+			continue
+		}
+		data, err := os.ReadFile(f.LocalPath)
+		if err != nil || len(data) != f.SizeBytes {
+			t.Errorf("file %v: %v, %d bytes on disk, size_bytes %d", f.FileId, err, len(data), f.SizeBytes)
+		}
+		if f.FileId == 5 && f.MimeType != "image/png" {
+			t.Errorf("mime_type of the png = %q", f.MimeType)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "1")); len(entries) != len(want) {
+		t.Errorf("%d entries in the task directory, want %d (temporary files left behind?)", len(entries), len(want))
+	}
+
+	reasons := map[string]string{}
+	for _, s := range out.Skipped {
+		reasons[fmt.Sprintf("task %v file %v", s.TaskId, s.FileId)] = s.Reason
+	}
+	for key, reason := range map[string]string{
+		"task 1 file 7": "exceeds limit 1000 bytes",
+		"task 2 file 0": "task 2 not found",
+		"task 0 file 9": "attachment 9 not found",
+	} {
+		if !strings.Contains(reasons[key], reason) {
+			t.Errorf("%v: reason %q, want one containing %q (skipped: %+v)", key, reasons[key], reason, out.Skipped)
+		}
+	}
+	if len(out.Skipped) != 3 {
+		t.Errorf("skipped %d, want 3: %+v", len(out.Skipped), out.Skipped)
+	}
+}
+
+func TestDownloadAttachmentsStaysInDirectory(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	// A link planted in the download directory must not redirect the writes.
+	if err := os.Symlink(outside, filepath.Join(dir, "1")); err != nil {
+		t.Skipf("cannot create a symlink: %v", err)
+	}
+	session, _ := connectOpts(t, Options{DownloadDir: dir})
+	out := download(t, session, map[string]any{"file_ids": []int{6}})
+	if len(out.Files) != 0 || len(out.Skipped) != 1 {
+		t.Errorf("want the file skipped, got %+v", out)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("wrote outside the download directory: %v", entries)
+	}
+}
+
+func TestDownloadAttachmentsWithoutDirectory(t *testing.T) {
+	session, _ := connectOpts(t, Options{})
+	res, text := call(t, session, "download_attachments", map[string]any{"file_ids": []int{6}})
+	if !res.IsError || !strings.Contains(text, "--download-dir") {
+		t.Errorf("want an error about the missing directory, got IsError=%v %q", res.IsError, text)
 	}
 }

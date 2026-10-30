@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -31,6 +32,8 @@ const (
 type opts struct {
 	ConfigFile         string `short:"c" long:"config" description:"Config file path (only the Kanboard section is used)" env:"KANBOARD_TASK_CONFIG"`
 	MaxAttachmentBytes int64  `long:"max-attachment-bytes" description:"get_attachment refuses larger files (0 = no limit)" default:"5242880"`
+	DownloadDir        string `short:"o" long:"download-dir" description:"download_attachments saves files into DIR/<task-id>/ (default: kanboard-mcp/attachments in the user cache directory)" value-name:"DIR"`
+	MaxDownloadBytes   int64  `long:"max-download-bytes" description:"download_attachments skips larger files (0 = no limit)" default:"20971520"`
 	Verbose            bool   `short:"v" long:"verbose" description:"Verbose loglevel (logs go to stderr)"`
 	Debug              bool   `short:"d" long:"debug" description:"Debug loglevel"`
 	ShowVersion        bool   `long:"version" description:"Show version information and exit"`
@@ -72,18 +75,39 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(exitUsage)
 	}
+	downloadDir, err := resolveDownloadDir(o.DownloadDir)
+	if err != nil {
+		// download_attachments reports the missing directory; the other tools still work.
+		slog.Warn("no download directory", "error", err)
+	}
 	server := mcpserver.New(*cfg, mcpserver.Options{
 		Version:            version.LocalVersion(),
 		MaxAttachmentBytes: o.MaxAttachmentBytes,
+		DownloadDir:        downloadDir,
+		MaxDownloadBytes:   o.MaxDownloadBytes,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	slog.Info("serving MCP on stdio", "kanboard", cfg.ApiUrl, "user", cfg.Username)
+	slog.Info("serving MCP on stdio", "kanboard", cfg.ApiUrl, "user", cfg.Username, "download_dir", downloadDir)
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(exitError)
 	}
+}
+
+// resolveDownloadDir returns the absolute download directory: dir, or by default
+// kanboard-mcp/attachments in the user cache directory (%LocalAppData% on Windows,
+// ~/.cache on Linux). The directory is created on the first download.
+func resolveDownloadDir(dir string) (string, error) {
+	if dir == "" {
+		cache, err := os.UserCacheDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(cache, "kanboard-mcp", "attachments")
+	}
+	return filepath.Abs(dir)
 }
 
 // wrap breaks s at spaces into lines of at most width characters; lines after the
@@ -108,7 +132,7 @@ func wrap(s string, width int, indent string) string {
 const infoText = `kanboard-mcp - MCP server with read-only access to Kanboard tasks
 
 USAGE
-  kanboard-mcp -c config.yml [--max-attachment-bytes N] [-v]
+  kanboard-mcp -c config.yml [--max-attachment-bytes N] [-o DIR] [--max-download-bytes N] [-v]
 
   Speaks MCP over stdin/stdout, so it is started by an MCP client. For Claude Code:
     claude mcp add kanboard -- kanboard-mcp -c /path/to/config.yml
@@ -122,7 +146,7 @@ AUTHENTICATION
   token reads with that user's permissions. For an agent that works on behalf of
   one person, that person's personal token is the better fit.
 
-TOOLS (all read-only)
+TOOLS (read-only on Kanboard)
   get_task        tasks: [id | #KB123 | task URL, ...]   (required)
                   fields: [name, ...]   only these top-level fields
                   max_comments: N       only the newest N comments
@@ -143,6 +167,20 @@ TOOLS (all read-only)
     Returns an image (png, jpeg, gif, webp) as image content, or a text file
     as text, cut at %d KiB. Other file types and files larger than
     --max-attachment-bytes are refused.
+
+  download_attachments
+                  tasks: [id | #KB123 | task URL, ...]
+                  file_ids: [N, ...]
+    Saves attachments of any type as DIR/<task id>/<file id>-<name>, every
+    attachment of the given tasks and/or the given files. Returns a JSON object:
+    directory, files [{file_id, task_id, name, size_bytes, mime_type,
+    local_path}] and skipped [{file_id, task_id, name, size_bytes, reason}].
+    DIR is set with -o/--download-dir (default: kanboard-mcp/attachments in the
+    user cache directory, i.e. %%LocalAppData%% on Windows, ~/.cache on Linux);
+    the agent cannot write anywhere else. Names are made safe for Windows and
+    Unix file systems. Files larger than --max-download-bytes (default 20 MiB)
+    are skipped. An earlier copy of the same file is replaced. This is the only
+    tool that writes anything, and only below DIR, never to Kanboard.
 
   Errors (task not found, no access, bad arguments) are returned as tool errors
   with a message, so the agent can see what went wrong.
