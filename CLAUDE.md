@@ -30,15 +30,15 @@ go run ./cmd/kanboard-task -c assets/config.yml 13670   # dump a task as JSON (r
 go run ./cmd/kanboard-task --info                       # documents every output field
 go run ./cmd/kanboard-mcp --info                        # documents the MCP tools
 ./scripts/build.sh             # build for host OS/arch into dist/<os>/<arch>/ with version ldflags
-./scripts/build.sh all         # cross-build linux+windows x amd64+386 into dist/
+./scripts/build.sh all         # cross-build linux+windows x amd64+386, darwin x amd64+arm64 into dist/
 go test ./...                  # unit tests (taskdump) + MCP tool tests against a fake Kanboard (mcpserver)
 ```
 
 Tests: `internal/taskdump` (`TestRewriteEmbeddedFiles`, `TestSanitizeFileName*`) and `internal/mcpserver`, which connects an SDK client
 over in-memory transports to the server, backed by an `httptest` fake of the Kanboard JSON-RPC endpoint (no
 network, no credentials). CI (`.github/workflows/go.yml`) does not run tests and only builds
-linux/amd64 and windows/amd64 with the same `-ldflags -X ...internal/version.{Built,Commit,Branch}` pattern that
-`scripts/build.sh` uses. If you add a version field or a new `cmd/`, update both (the `cmds=` list in the
+linux/amd64, windows/amd64 and darwin/arm64 with the same `-ldflags -X ...internal/version.{Built,Commit,Branch}`
+pattern that `scripts/build.sh` uses. If you add a version field or a new `cmd/`, update both (the `cmds=` list in the
 script and the per-binary build steps in the workflow). Both build `cmd/<name>/<name>.go` as a single file, so
 each `cmd/` package must stay one file; put the logic in `internal/`.
 

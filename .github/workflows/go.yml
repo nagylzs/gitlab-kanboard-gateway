@@ -30,23 +30,24 @@ jobs:
       env:
         GOOS: linux
         GOARCH: amd64
+        BRANCH: ${{ github.head_ref }}
       run: |
         go build -ldflags " \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
           -o gitlab-kanboard-gateway \
           cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
         go build -ldflags " \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
           -o kanboard-task \
           cmd/kanboard-task/kanboard-task.go
         go build -ldflags " \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
           -o kanboard-mcp \
           cmd/kanboard-mcp/kanboard-mcp.go
 
@@ -64,23 +65,24 @@ jobs:
       env:
         GOOS: windows
         GOARCH: amd64
+        BRANCH: ${{ github.head_ref }}
       run: |
         go build -ldflags " \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
           -o gitlab-kanboard-gateway.exe \
           cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
         go build -ldflags " \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
           -o kanboard-task.exe \
           cmd/kanboard-task/kanboard-task.go
         go build -ldflags " \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
           -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
-          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${{ github.head_ref }}" \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
           -o kanboard-mcp.exe \
           cmd/kanboard-mcp/kanboard-mcp.go
 
@@ -92,4 +94,40 @@ jobs:
           gitlab-kanboard-gateway.exe
           kanboard-task.exe
           kanboard-mcp.exe
+        retention-days: 5
+
+    # Own directory: the macOS binaries have the same names as the Linux ones
+    - name: Build macOS Arm64
+      env:
+        GOOS: darwin
+        GOARCH: arm64
+        BRANCH: ${{ github.head_ref }}
+      run: |
+        go build -ldflags " \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
+          -o darwin-arm64/gitlab-kanboard-gateway \
+          cmd/gitlab-kanboard-gateway/gitlab-kanboard-gateway.go
+        go build -ldflags " \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
+          -o darwin-arm64/kanboard-task \
+          cmd/kanboard-task/kanboard-task.go
+        go build -ldflags " \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Built=${{ steps.current-time.outputs.time }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Commit=${{ github.sha }} \
+          -X github.com/nagylzs/gitlab-kanboard-gateway/internal/version.Branch=${BRANCH}" \
+          -o darwin-arm64/kanboard-mcp \
+          cmd/kanboard-mcp/kanboard-mcp.go
+
+    - name: 'Upload macOS Artifact'
+      uses: actions/upload-artifact@v7
+      with:
+        name: gitlab-kanboard-gateway-darwin-arm64
+        path: |
+          darwin-arm64/gitlab-kanboard-gateway
+          darwin-arm64/kanboard-task
+          darwin-arm64/kanboard-mcp
         retention-days: 5

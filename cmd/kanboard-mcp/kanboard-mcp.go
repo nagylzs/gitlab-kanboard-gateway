@@ -108,7 +108,8 @@ func main() {
 
 // resolveDownloadDir returns the absolute download directory: dir, or by default
 // kanboard-mcp/attachments in the user cache directory (%LocalAppData% on Windows,
-// ~/.cache on Linux). The directory is created on the first download.
+// ~/Library/Caches on macOS, ~/.cache on Linux). The directory is created on the
+// first download.
 func resolveDownloadDir(dir string) (string, error) {
 	if dir == "" {
 		cache, err := os.UserCacheDir()
@@ -190,11 +191,12 @@ TOOLS (read-only on Kanboard)
     directory, files [{file_id, task_id, name, size_bytes, mime_type,
     local_path}] and skipped [{file_id, task_id, name, size_bytes, reason}].
     DIR is set with -o/--download-dir (default: kanboard-mcp/attachments in the
-    user cache directory, i.e. %%LocalAppData%% on Windows, ~/.cache on Linux);
-    the agent cannot write anywhere else. Names are made safe for Windows and
-    Unix file systems. Files larger than --max-download-bytes (default 20 MiB)
-    are skipped. An earlier copy of the same file is replaced. This is the only
-    tool that writes anything, and only below DIR, never to Kanboard.
+    user cache directory, i.e. %%LocalAppData%% on Windows, ~/Library/Caches on
+    macOS, ~/.cache on Linux); the agent cannot write anywhere else. Names are
+    made safe for Windows and Unix file systems. Files larger than
+    --max-download-bytes (default 20 MiB) are skipped. An earlier copy of the
+    same file is replaced. This is the only tool that writes anything, and only
+    below DIR, never to Kanboard.
 
   Errors (task not found, no access, bad arguments) are returned as tool errors
   with a message, so the agent can see what went wrong.

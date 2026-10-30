@@ -42,8 +42,17 @@ returns, which differs from the string-typed examples still shown in the Kanboar
 
 ### Pre-built binaries
 
-Every push to `main` builds Linux and Windows (amd64) binaries as GitHub Actions artifacts. Download them from
-the *Actions* tab of this repository.
+Every push to `main` builds Linux and Windows (amd64) and macOS (arm64) binaries as GitHub Actions artifacts.
+Download them from the *Actions* tab of this repository.
+
+The archives attached to each [release](https://github.com/nagylzs/gitlab-kanboard-gateway/releases) contain
+`dist/<os>/<arch>/` for Linux and Windows (amd64, 386) and, from v1.5.0 on, macOS (amd64, arm64). The macOS
+binaries are not notarized, so macOS refuses to run them after a browser download; remove the quarantine flag
+first:
+
+```bash
+xattr -d com.apple.quarantine gitlab-kanboard-gateway kanboard-task kanboard-mcp
+```
 
 ### Building from source
 
@@ -51,7 +60,7 @@ the *Actions* tab of this repository.
 git clone https://github.com/nagylzs/gitlab-kanboard-gateway.git
 cd gitlab-kanboard-gateway
 ./scripts/build.sh          # binaries for the host OS/architecture in dist/<os>/<arch>/
-./scripts/build.sh all      # linux + windows, amd64 + 386
+./scripts/build.sh all      # linux + windows (amd64, 386), macOS (amd64, arm64)
 ```
 
 Or simply:
@@ -304,7 +313,8 @@ person can see, and
   `local_path`, `name`, `size_bytes` and `mime_type`, plus a `skipped` list with the reason (too large, not
   found, no access). The agent then reads or copies the files with its own tools. `DIR` is chosen when the
   server starts, never by the agent: `-o`/`--download-dir`, by default `kanboard-mcp\attachments` under
-  `%LocalAppData%` on Windows and `~/.cache/kanboard-mcp/attachments` on Linux. Attachment names are made
+  `%LocalAppData%` on Windows, `~/Library/Caches/kanboard-mcp/attachments` on macOS and
+  `~/.cache/kanboard-mcp/attachments` on Linux. Attachment names are made
   safe for Windows and Unix file systems, and the files are written so that neither a name nor a symlink
   or junction inside `DIR` can lead outside it. Files larger than `--max-download-bytes` (default 20 MiB)
   are skipped. This is the only tool that writes anything, and it writes nothing to Kanboard.
