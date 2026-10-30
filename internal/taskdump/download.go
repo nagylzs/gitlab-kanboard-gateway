@@ -67,11 +67,12 @@ func SaveAttachment(cfg config.KanboardConfig, dir string, maxBytes int64, taskI
 	if err != nil {
 		path = filepath.Join(dir, rel)
 	}
-	return &SavedFile{Path: path, Size: len(data), MimeType: contentType(f.Name, data)}, nil
+	return &SavedFile{Path: path, Size: len(data), MimeType: ContentType(f.Name, data)}, nil
 }
 
-// contentType guesses from the file extension, then from the content.
-func contentType(name string, data []byte) string {
+// ContentType guesses the MIME type of an attachment from the file extension, then
+// from the content.
+func ContentType(name string, data []byte) string {
 	if t := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); t != "" {
 		return t
 	}

@@ -196,7 +196,8 @@ func getAttachmentTool() *mcp.Tool {
 		Name:  "get_attachment",
 		Title: "Show a Kanboard attachment",
 		Description: `Returns the content of a task attachment: images (png, jpeg, gif, webp) as an image, text files as text ` +
-			`(cut at 100 KiB). Other file types are refused.`,
+			`(cut at 100 KiB). Other file types (docx, pdf, xlsx, zip, ...) and large files are refused; ` +
+			`download_attachments saves any attachment as a local file instead.`,
 		Annotations: readOnly,
 	}
 }
@@ -240,8 +241,10 @@ func (t *tools) getAttachment(_ context.Context, _ *mcp.CallToolRequest, in getA
 			&mcp.TextContent{Text: string(text)},
 		}}, nil, nil
 	}
+	// The sniffed type decides what can be shown; the message names the same type that
+	// download_attachments reports (a docx sniffs as application/zip).
 	return nil, nil, fmt.Errorf("attachment %v %q is %v, which cannot be shown; only images and text files are supported. "+
-		"download_attachments can save it as a file", f.Id, f.Name, mimeType)
+		"download_attachments can save it as a file", f.Id, f.Name, taskdump.ContentType(f.Name, data))
 }
 
 // --- download_attachments ---
