@@ -97,3 +97,20 @@ type KbResponseUser struct {
 	Role     string `json:"role"`
 	IsActive bool   `json:"is_active"`
 }
+
+// https://docs.kanboard.org/v1/api/link_procedures/#getalllinks
+type KbResponseLink struct {
+	Id         int    `json:"id"`
+	Label      string `json:"label"` // e.g. "relates to", "blocks"
+	OppositeId int    `json:"opposite_id"`
+}
+
+// https://docs.kanboard.org/v1/api/internal_task_link_procedures/#gettasklinkbyid
+type KbResponseTaskLinkById struct {
+	Id             int    `json:"id"`
+	TaskId         int    `json:"task_id"`
+	OppositeTaskId int    `json:"opposite_task_id"`
+	LinkId         int    `json:"link_id"`
+	Label          string `json:"label"`
+	OppositeLinkId int    `json:"opposite_link_id"`
+}

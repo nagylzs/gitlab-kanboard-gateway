@@ -8,8 +8,11 @@ The repository builds three programs:
 | Binary                    | Purpose                                                                                        |
 |---------------------------|------------------------------------------------------------------------------------------------|
 | `gitlab-kanboard-gateway` | Background service. Receives GitLab *push* webhooks and creates Kanboard comments from them.   |
-| `kanboard-task`           | Command-line tool. Dumps a Kanboard task as JSON, read-only. Made for AI agents and scripts.   |
-| `kanboard-mcp`            | MCP server. Gives AI agents the same read-only access to Kanboard tasks as MCP tools.          |
+| `kanboard-task`           | Command-line tool. Dumps a Kanboard task as JSON. Made for AI agents and scripts.              |
+| `kanboard-mcp`            | MCP server. Gives AI agents the same access to Kanboard tasks as MCP tools.                    |
+
+Both are read-only unless they are started with `--writable`; then they can also create tasks, comment,
+upload files, link, move and close tasks (see [Changing tasks](#changing-tasks---writable)).
 
 ## How the gateway works
 
@@ -177,12 +180,12 @@ gitlab-kanboard-gateway [OPTIONS]
   -h, --help     Show help
 ```
 
-## kanboard-task: read-only task dump
+## kanboard-task: task dump
 
 `kanboard-task` looks up one or more Kanboard tasks and prints everything about them as JSON on stdout:
 title and description, project, column, swimlane and category names, owner and creator, dates, tags,
-subtasks, comments, attachments, links to other tasks, and external links. It only ever reads from
-Kanboard, so it is safe to hand to an AI agent or a script that needs the content of a ticket.
+subtasks, comments, attachments, links to other tasks, and external links. Without `--writable` it only
+ever reads from Kanboard, so it is safe to hand to an AI agent or a script that needs the content of a ticket.
 
 It uses the same configuration file as the gateway, but reads only `Kanboard.ApiUrl`, `Kanboard.Username`
 and `Kanboard.Password`. A file containing just those three keys is sufficient. The path can also be given
@@ -246,12 +249,12 @@ Logs go to stderr; stdout carries only JSON. Exit codes:
 | 0    | Success                                              |
 | 1    | Usage or configuration error                         |
 | 2    | A task does not exist (others are still printed)     |
-| 3    | Kanboard API error                                   |
+| 3    | Kanboard API error, or a change was not made         |
 
 ## kanboard-mcp: MCP server for AI agents
 
-`kanboard-mcp` is an [MCP](https://modelcontextprotocol.io/) server that gives AI agents read-only access
-to Kanboard. It returns the same data as `kanboard-task`, but as MCP tools. It speaks MCP over stdin/stdout,
+`kanboard-mcp` is an [MCP](https://modelcontextprotocol.io/) server that gives AI agents access to Kanboard,
+read-only unless it is started with `--writable`. It returns the same data as `kanboard-task`, but as MCP tools. It speaks MCP over stdin/stdout,
 so an MCP client starts it as a subprocess. It uses the same configuration file as `kanboard-task` (only
 `Kanboard.ApiUrl`, `Kanboard.Username` and `Kanboard.Password`), and the same `KANBOARD_TASK_CONFIG`
 environment variable.
@@ -317,8 +320,66 @@ person can see, and
   `~/.cache/kanboard-mcp/attachments` on Linux. Attachment names are made
   safe for Windows and Unix file systems, and the files are written so that neither a name nor a symlink
   or junction inside `DIR` can lead outside it. Files larger than `--max-download-bytes` (default 20 MiB)
-  are skipped. This is the only tool that writes anything, and it writes nothing to Kanboard.
+  are skipped. Without `--writable` this is the only tool that writes anything, and it writes nothing to
+  Kanboard.
 * `kanboard-mcp --info` describes the tools and lists the field names.
+
+## Changing tasks (`--writable`)
+
+Started with `-w`/`--writable`, `kanboard-mcp` offers more tools and `kanboard-task` accepts commands that
+change Kanboard. Without the option those tools do not exist and the commands are refused. Nothing deletes
+a task, a comment or an attachment.
+
+```bash
+claude mcp add kanboard -- /path/to/kanboard-mcp --writable --signature Claude /path/to/config.yml
+```
+
+| Tool (`kanboard-mcp`)  | Command (`kanboard-task`)                      | What it does                                         |
+|------------------------|------------------------------------------------|------------------------------------------------------|
+| `create_task`          | `create-task PROJECT TITLE [--description ...]` | new task; column, swimlane, category, owner, tags   |
+| `add_comment`          | `comment TASK --text ...`                      | comment on a task                                    |
+| `update_comment`       | `edit-comment COMMENT_ID --text ...`           | replace the text of a comment written by the agent   |
+| `upload_files`         | `upload TASK FILE... [--text ...]`             | attach files, with one comment that shows them       |
+| `add_task_link`        | `link TASK RELATION OTHER_TASK`                | e.g. `link 12 blocks 34`                             |
+| `remove_task_link`     | `unlink TASK LINK_ID`                          | remove a link between tasks                          |
+| `add_external_link`    | `add-url TASK URL [--title ...]`               | attach a URL                                         |
+| `remove_external_link` | `remove-url TASK LINK_ID`                      | remove a URL                                         |
+| `move_task`            | `move TASK [--column] [--swimlane] [--position]` | another column, swimlane or position              |
+| `close_task`, `open_task` | `close TASK`, `open TASK`                   | close or reopen                                      |
+
+* **Whose name.** Changes are made as the Kanboard user of the config file. With a personal access token
+  that is the token's owner. With the `jsonrpc` application token, comments are written as
+  `Kanboard.UserId`, which must then be set, and that user becomes a new task's creator if they are a
+  member of the project.
+* **Signature.** With `--signature Claude`, a description or comment written by the agent ends with a
+  horizontal rule and *created by Claude*; an edited comment says *created by Claude, modified by Claude*.
+  Readers can then tell the agent's text from the account owner's, even though Kanboard shows the same
+  author for both.
+* **Editing comments** is limited to comments of the same Kanboard user that carry a signature footer, so a
+  comment someone wrote by hand is never changed. Without `--signature` the two cannot be told apart, so
+  editing is refused.
+* **Uploads** read files only below the upload directory: `--upload-dir`, by default `kanboard-mcp/uploads`
+  in the user cache directory for `kanboard-mcp` (created at start, and named in the tool description) and
+  the current directory for `kanboard-task`. Paths outside it, also through a symlink, are refused, so a
+  ticket that tells the agent to "upload ~/.ssh/id_rsa" gets nowhere; the agent has to copy a file there
+  first, which the user sees. Files larger than `--max-upload-bytes` (default 10 MiB) are refused; the PHP
+  limits of the Kanboard server (`post_max_size`) may be lower. Every upload adds one comment: the given
+  text, then the files (images inline, other files as download links), then the signature.
+* **Names.** Projects, columns, swimlanes, categories and users can be given by id or by name (exact, or a
+  part of exactly one name, case-insensitive); a name that does not match is refused with the list of
+  valid ones. The owner can also be `me`. Relations are Kanboard's link labels (`relates to`, `blocks`,
+  `is blocked by`, `duplicates`, `is a child of`, `fixes`, ...); a non-admin personal token cannot list
+  them, so then the default labels are used and the created link is checked.
+* `kanboard-task` reads a long text from a file or stdin with `--text-file FILE` (`-` = stdin), and
+  `--description-file` for `create-task`. It prints the result as JSON.
+
+```bash
+kanboard-task -c config.yml -w --signature Claude comment 13670 --text 'Fixed in !123.'
+kanboard-task -c config.yml -w --signature Claude create-task webshop 'Export fails' --column Ready --tag bug \
+  --description-file notes.md
+kanboard-task -c config.yml -w --signature Claude upload 13670 screenshot.png --text 'After the fix:'
+kanboard-task -c config.yml -w move 13670 --column Done
+```
 
 ## Development
 

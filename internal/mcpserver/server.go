@@ -1,6 +1,7 @@
-// Package mcpserver exposes the read-only Kanboard lookups of taskdump as MCP tools.
-// No tool ever calls a Kanboard procedure that modifies data. The only tool that
-// writes anything is download_attachments, and only below Options.DownloadDir.
+// Package mcpserver exposes the Kanboard lookups of taskdump as MCP tools, and, only
+// when Options.Writable is set, the changes of taskedit (write.go). Without it no
+// tool calls a Kanboard procedure that modifies data, and the only tool that writes
+// anything is download_attachments, only below Options.DownloadDir.
 package mcpserver
 
 import (
@@ -31,6 +32,14 @@ type Options struct {
 	DownloadDir string
 	// download_attachments skips files larger than this (0 = no limit).
 	MaxDownloadBytes int64
+	// Writable adds the tools that change Kanboard (see write.go). Without it they
+	// do not exist.
+	Writable bool
+	// Signature, UploadDir and MaxUploadBytes are the taskedit.Options of the write
+	// tools.
+	Signature      string
+	UploadDir      string
+	MaxUploadBytes int64
 }
 
 // MaxTextBytes is where get_attachment cuts text files.
@@ -39,8 +48,9 @@ const MaxTextBytes = 100 * 1024
 // Image types that MCP clients can be expected to show.
 var imageTypes = []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
 
-const instructions = `Read-only access to a Kanboard server; nothing is ever modified.
-- get_task: everything about one or more tasks as JSON. Use fields and max_comments to keep big tickets small.
+const instructions = "Read-only access to a Kanboard server; nothing is ever modified.\n" + readTools
+
+const readTools = `- get_task: everything about one or more tasks as JSON. Use fields and max_comments to keep big tickets small.
 - search_tasks: find tasks with the Kanboard search syntax; returns short summaries, use get_task for the full ticket.
 - get_attachment: shows an attachment, e.g. a screenshot embedded in a comment (see the comment's attachment_ids).
 - download_attachments: saves attachments of any type (docx, pdf, xlsx, zip, ...) into local files and returns their paths.`
@@ -48,15 +58,22 @@ const instructions = `Read-only access to a Kanboard server; nothing is ever mod
 // New builds the server. Each tool call creates its own taskdump.Dumper, so calls
 // may run concurrently.
 func New(cfg config.KanboardConfig, opts Options) *mcp.Server {
+	text := instructions
+	if opts.Writable {
+		text = writableInstructions
+	}
 	s := mcp.NewServer(
 		&mcp.Implementation{Name: "kanboard-mcp", Version: opts.Version},
-		&mcp.ServerOptions{Instructions: instructions, Logger: slog.Default()},
+		&mcp.ServerOptions{Instructions: text, Logger: slog.Default()},
 	)
 	t := &tools{cfg: cfg, opts: opts}
 	mcp.AddTool(s, getTaskTool(), t.getTask)
 	mcp.AddTool(s, searchTasksTool(), t.searchTasks)
 	mcp.AddTool(s, getAttachmentTool(), t.getAttachment)
 	mcp.AddTool(s, downloadAttachmentsTool(), t.downloadAttachments)
+	if opts.Writable {
+		addWriteTools(s, cfg, opts)
+	}
 	return s
 }
 

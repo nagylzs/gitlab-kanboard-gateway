@@ -10,14 +10,23 @@ Three Go binaries sharing one config file and one Kanboard JSON-RPC client, no d
 
 - **`gitlab-kanboard-gateway`** (daemon): receives GitLab **push** webhook events over HTTP, scans commit
   messages for Kanboard task references (configurable regexps), and posts a comment on each referenced task.
-- **`kanboard-task`** (CLI, read-only): dumps one or more tasks as agent-friendly JSON (description, comments,
-  attachments, subtasks, links, resolved names). Built for AI agents that need to read tickets. It must never
-  call a Kanboard procedure that modifies data.
-- **`kanboard-mcp`** (MCP server over stdio, read-only): the same data as MCP tools `get_task` (with `fields`
+- **`kanboard-task`** (CLI): dumps one or more tasks as agent-friendly JSON (description, comments,
+  attachments, subtasks, links, resolved names). Built for AI agents that need to read tickets. With
+  `-w/--writable` its go-flags subcommands (`create-task`, `comment`, `edit-comment`, `upload`, `link`,
+  `unlink`, `add-url`, `remove-url`, `move`, `close`, `open`) change Kanboard; without it, it must never call
+  a Kanboard procedure that modifies data.
+- **`kanboard-mcp`** (MCP server over stdio): the same data as MCP tools `get_task` (with `fields`
   and `max_comments`), `search_tasks`, `get_attachment` and `download_attachments`. Same read-only rule as
-  `kanboard-task`. `download_attachments` is the only tool that writes, and only local files below the
+  `kanboard-task`: the write tools (`internal/mcpserver/write.go`) are registered only with `--writable`.
+  Without it, `download_attachments` is the only tool that writes, and only local files below the
   server's `--download-dir` (default `kanboard-mcp/attachments` in the user cache dir); the agent never
   chooses a path.
+
+Writes from both go through `internal/taskedit` only. Its safety rules are deliberate, keep them: nothing
+deletes a task, comment or attachment; agent-written text gets the `--signature` footer;
+`UpdateComment` edits only the server user's own comments that carry a footer (and needs a signature);
+`UploadFiles` reads only below the upload dir through an `os.Root` (an agent reading untrusted tickets
+must not be able to publish arbitrary local files); `remove_*` checks that the link belongs to the task.
 
 ## Commands
 
@@ -31,12 +40,13 @@ go run ./cmd/kanboard-task --info                       # documents every output
 go run ./cmd/kanboard-mcp --info                        # documents the MCP tools
 ./scripts/build.sh             # build for host OS/arch into dist/<os>/<arch>/ with version ldflags
 ./scripts/build.sh all         # cross-build linux+windows x amd64+386, darwin x amd64+arm64 into dist/
-go test ./...                  # unit tests (taskdump) + MCP tool tests against a fake Kanboard (mcpserver)
+go test ./...                  # unit tests (taskdump, taskedit) + MCP tool tests against a fake Kanboard (mcpserver)
 ```
 
-Tests: `internal/taskdump` (`TestRewriteEmbeddedFiles`, `TestSanitizeFileName*`) and `internal/mcpserver`, which connects an SDK client
+Tests: `internal/taskdump` (`TestRewriteEmbeddedFiles`, `TestSanitizeFileName*`), `internal/taskedit`
+(signature footer, name matching) and `internal/mcpserver`, which connects an SDK client
 over in-memory transports to the server, backed by an `httptest` fake of the Kanboard JSON-RPC endpoint (no
-network, no credentials). CI (`.github/workflows/go.yml`) does not run tests and only builds
+network, no credentials; `write_test.go` covers the write tools). CI (`.github/workflows/go.yml`) does not run tests and only builds
 linux/amd64, windows/amd64 and darwin/arm64 with the same `-ldflags -X ...internal/version.{Built,Commit,Branch}`
 pattern that `scripts/build.sh` uses. If you add a version field or a new `cmd/`, update both (the `cmds=` list in the
 script and the per-binary build steps in the workflow). Both build `cmd/<name>/<name>.go` as a single file, so
@@ -44,7 +54,13 @@ each `cmd/` package must stay one file; put the logic in `internal/`.
 
 `assets/config.yml` (a symlink to the developer's real config) points at a live Kanboard server. It is fine to use
 it for **read-only** probing (`getTask`, `getAllComments`, ...) while developing, but never call a procedure that
-creates, updates or removes anything there.
+creates, updates or removes anything there, and never run the write commands/tools with it.
+
+Test writes against a throwaway Kanboard in Docker instead: `kanboard/kanboard:v1.2.54` with
+`DATABASE_URL=postgres://...` pointing at a `postgres` container. Use PostgreSQL, not the image's default
+SQLite: SQLite returns booleans as 0/1, which the client's `bool` fields (matching the live server) cannot
+decode. The application token is in the `settings` table (`option='api_token'`); create a non-admin
+user and add it to a project to test personal-token behaviour (several procedures are admin-only for it).
 
 `assets/config.yml` is gitignored on purpose: that's where the developer keeps a real config with credentials.
 `assets/config_example.yml` is the committed example and is `go:embed`ded into the binary for `--info`, so keep
@@ -88,7 +104,9 @@ Supporting packages:
   an RPC `error` object, then unmarshals into the typed response. Each API method is its own file
   (`get_task.go`, `get_all_comments.go`, `create_comment.go`, ...). New read calls use the generic
   `KbRequest[P]` / `KbResponse[R]` envelopes plus a `Kb*IdParam` struct (see `rpc_types.go`); result structs for
-  the task-detail procedures live in `rpc_types_details.go`. **Field types follow what the server actually
+  the task-detail procedures live in `rpc_types_details.go`. Write calls use `writeId` / `writeOk`
+  (`rpc_write.go`): Kanboard answers a refused write with `false` (sometimes `0`) and no reason, which
+  becomes `ErrRefused`; check inputs before the call so the user gets a useful message. **Field types follow what the server actually
   returns, not the API docs**: the docs show every value as a string, but the Kanboard this is tested against
   (v1.2.54) returns ints/bools (see commits 4af9c6d and 4431f42). Older Kanboard releases returned strings and
   are unsupported; never copy field types from the documentation examples, probe the real server instead. Nullable dates are `*int`; "not found" lookups return `result: null`, which
@@ -114,7 +132,14 @@ Supporting packages:
   `Options.MaxComments` keeps the newest N comments and sets `comments_omitted`. `select.go` derives
   `TaskFields` from the `TaskDocument` json tags (so new model fields become selectable automatically) and
   `SelectFields` encodes only the selected keys in model order; `MarshalJSON` is the non-HTML-escaping encoder.
-- **`internal/mcpserver`** – the `kanboard-mcp` tools on top of `taskdump`. Each call builds its own `Dumper`
+- **`internal/taskedit`** – the changes behind `--writable` (`Editor`, shared by both binaries). Resolves
+  projects/columns/swimlanes/categories/users by id or name (`resolve.go`, errors list the valid names),
+  `signature.go` builds and parses the footer (`---` then `*created by X, modified by Y*`), `upload.go`
+  confines uploads to the upload dir and posts one comment with markdown links to the new files. The comment
+  author is `getMe` with a personal token, `Kanboard.UserId` with the `jsonrpc` token. Link types
+  (`getAllLinks`) are admin-only for personal tokens, so it falls back to Kanboard's default labels and
+  checks the created link's label.
+- **`internal/mcpserver`** – the `kanboard-mcp` tools on top of `taskdump` (and `taskedit` in `write.go`). Each call builds its own `Dumper`
   (calls may run concurrently). Handler errors become MCP tool errors (`IsError`), not protocol errors, so
   the agent sees the message. Results are compact JSON text content, no `outputSchema` (field selection makes
   the shape variable). The `fields` enum and other constraints are patched into the schema that

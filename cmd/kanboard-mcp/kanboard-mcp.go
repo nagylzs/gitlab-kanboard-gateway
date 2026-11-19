@@ -1,7 +1,7 @@
-// kanboard-mcp: MCP server (stdio) that gives AI agents read-only access to Kanboard
-// tasks. It offers the same data as kanboard-task, as MCP tools.
+// kanboard-mcp: MCP server (stdio) that gives AI agents access to Kanboard tasks. It
+// offers the same data as kanboard-task, as MCP tools.
 //
-// It never modifies anything on the Kanboard server.
+// It modifies nothing on the Kanboard server unless it is started with --writable.
 package main
 
 import (
@@ -20,6 +20,7 @@ import (
 	"github.com/nagylzs/gitlab-kanboard-gateway/internal/config"
 	"github.com/nagylzs/gitlab-kanboard-gateway/internal/mcpserver"
 	"github.com/nagylzs/gitlab-kanboard-gateway/internal/taskdump"
+	"github.com/nagylzs/gitlab-kanboard-gateway/internal/taskedit"
 	"github.com/nagylzs/gitlab-kanboard-gateway/internal/version"
 )
 
@@ -34,6 +35,10 @@ type opts struct {
 	MaxAttachmentBytes int64  `long:"max-attachment-bytes" description:"get_attachment refuses larger files (0 = no limit)" default:"5242880"`
 	DownloadDir        string `short:"o" long:"download-dir" description:"download_attachments saves files into DIR/<task-id>/ (default: kanboard-mcp/attachments in the user cache directory)" value-name:"DIR"`
 	MaxDownloadBytes   int64  `long:"max-download-bytes" description:"download_attachments skips larger files (0 = no limit)" default:"20971520"`
+	Writable           bool   `short:"w" long:"writable" description:"Also offer the tools that change Kanboard (create tasks, comments, uploads, links, move, close)"`
+	Signature          string `long:"signature" description:"With --writable: sign descriptions and comments written by the agent with \"created by TEXT\" (default: no signature)" value-name:"TEXT"`
+	UploadDir          string `long:"upload-dir" description:"With --writable: upload_files reads files only below DIR (default: kanboard-mcp/uploads in the user cache directory)" value-name:"DIR"`
+	MaxUploadBytes     int64  `long:"max-upload-bytes" description:"With --writable: upload_files refuses larger files (0 = no limit)" default:"10485760"`
 	Verbose            bool   `short:"v" long:"verbose" description:"Verbose loglevel (logs go to stderr)"`
 	Debug              bool   `short:"d" long:"debug" description:"Debug loglevel"`
 	ShowVersion        bool   `long:"version" description:"Show version information and exit"`
@@ -85,38 +90,63 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(exitUsage)
 	}
-	downloadDir, err := resolveDownloadDir(o.DownloadDir)
+	if !o.Writable && (o.Signature != "" || o.UploadDir != "") {
+		fmt.Fprintln(os.Stderr, "error: --signature and --upload-dir require --writable")
+		os.Exit(exitUsage)
+	}
+	if err := taskedit.ValidateSignature(o.Signature); err != nil {
+		fmt.Fprintf(os.Stderr, "error: --signature: %v\n", err)
+		os.Exit(exitUsage)
+	}
+	downloadDir, err := resolveCacheDir(o.DownloadDir, "attachments")
 	if err != nil {
 		// download_attachments reports the missing directory; the other tools still work.
 		slog.Warn("no download directory", "error", err)
+	}
+	var uploadDir string
+	if o.Writable {
+		uploadDir, err = resolveCacheDir(o.UploadDir, "uploads")
+		if err == nil {
+			// It must exist for the agent to copy files into it.
+			err = os.MkdirAll(uploadDir, 0o755)
+		}
+		if err != nil {
+			// upload_files reports the missing directory; the other tools still work.
+			slog.Warn("no upload directory", "error", err)
+			uploadDir = ""
+		}
 	}
 	server := mcpserver.New(*cfg, mcpserver.Options{
 		Version:            version.LocalVersion(),
 		MaxAttachmentBytes: o.MaxAttachmentBytes,
 		DownloadDir:        downloadDir,
 		MaxDownloadBytes:   o.MaxDownloadBytes,
+		Writable:           o.Writable,
+		Signature:          o.Signature,
+		UploadDir:          uploadDir,
+		MaxUploadBytes:     o.MaxUploadBytes,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	slog.Info("serving MCP on stdio", "kanboard", cfg.ApiUrl, "user", cfg.Username, "download_dir", downloadDir)
+	slog.Info("serving MCP on stdio", "kanboard", cfg.ApiUrl, "user", cfg.Username, "download_dir", downloadDir,
+		"writable", o.Writable, "upload_dir", uploadDir)
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && ctx.Err() == nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(exitError)
 	}
 }
 
-// resolveDownloadDir returns the absolute download directory: dir, or by default
-// kanboard-mcp/attachments in the user cache directory (%LocalAppData% on Windows,
-// ~/Library/Caches on macOS, ~/.cache on Linux). The directory is created on the
-// first download.
-func resolveDownloadDir(dir string) (string, error) {
+// resolveCacheDir returns dir as an absolute path, or by default kanboard-mcp/<name>
+// in the user cache directory (%LocalAppData% on Windows, ~/Library/Caches on macOS,
+// ~/.cache on Linux). The download directory is created on the first download.
+func resolveCacheDir(dir, name string) (string, error) {
 	if dir == "" {
 		cache, err := os.UserCacheDir()
 		if err != nil {
 			return "", err
 		}
-		dir = filepath.Join(cache, "kanboard-mcp", "attachments")
+		dir = filepath.Join(cache, "kanboard-mcp", name)
 	}
 	return filepath.Abs(dir)
 }
@@ -140,19 +170,22 @@ func wrap(s string, width int, indent string) string {
 	return strings.Join(lines, "\n"+indent)
 }
 
-const infoText = `kanboard-mcp - MCP server with read-only access to Kanboard tasks
+const infoText = `kanboard-mcp - MCP server with access to Kanboard tasks (read-only by default)
 
 USAGE
   kanboard-mcp [-c] config.yml [--max-attachment-bytes N] [-o DIR] [--max-download-bytes N] [-v]
+  kanboard-mcp [-c] config.yml --writable [--signature TEXT] [--upload-dir DIR] [--max-upload-bytes N] ...
 
   Speaks MCP over stdin/stdout, so it is started by an MCP client. For Claude Code:
     claude mcp add kanboard /path/to/kanboard-mcp /path/to/config.yml
   The config file is the same YAML as for kanboard-task; only Kanboard.ApiUrl,
-  Kanboard.Username and Kanboard.Password are read. It can be given as the
+  Kanboard.Username and Kanboard.Password are read (and Kanboard.UserId, see
+  AUTHENTICATION). It can be given as the
   argument, with -c, or via the KANBOARD_TASK_CONFIG environment variable.
   Options of kanboard-mcp (-o, ...) need "--" before the command, typed as two
   plain hyphens (a dash copied from a document does not work):
     claude mcp add kanboard -- /path/to/kanboard-mcp -o DIR /path/to/config.yml
+    claude mcp add kanboard -- /path/to/kanboard-mcp --writable --signature Claude /path/to/config.yml
   Logs go to stderr.
 
 AUTHENTICATION
@@ -160,8 +193,10 @@ AUTHENTICATION
   application API token reads every project; a login name with a personal access
   token reads with that user's permissions. For an agent that works on behalf of
   one person, that person's personal token is the better fit.
+  With --writable, changes are made in the name of that user; with the jsonrpc
+  token, comments are written as the user Kanboard.UserId (required then).
 
-TOOLS (read-only on Kanboard)
+TOOLS (read-only)
   get_task        tasks: [id | #KB123 | task URL, ...]   (required)
                   fields: [name, ...]   only these top-level fields
                   max_comments: N       only the newest N comments
@@ -195,8 +230,43 @@ TOOLS (read-only on Kanboard)
     macOS, ~/.cache on Linux); the agent cannot write anywhere else. Names are
     made safe for Windows and Unix file systems. Files larger than
     --max-download-bytes (default 20 MiB) are skipped. An earlier copy of the
-    same file is replaced. This is the only tool that writes anything, and only
-    below DIR, never to Kanboard.
+    same file is replaced. Without --writable this is the only tool that writes
+    anything, and only below DIR, never to Kanboard.
+
+TOOLS THAT CHANGE KANBOARD (only with -w/--writable)
+  Without --writable these tools do not exist. None of them deletes a task, a
+  comment or an attachment. Tasks, columns, users and so on can be given by id
+  or name; a name that does not match is refused with the list of valid ones.
+
+  Signature: with --signature Claude, a task description or comment written by
+  the agent ends with a horizontal rule and "*created by Claude*", and an
+  edited comment with "*created by Claude, modified by Claude*". So readers can
+  tell the agent's text from the account owner's.
+
+  create_task     project, title (required); description, column, swimlane,
+                  category, owner (me | id | name | username), tags: [name, ...]
+  add_comment     task, content
+  update_comment  comment_id, content   only comments of this server's Kanboard
+                  user that have a signature footer, so never a comment the
+                  account owner wrote by hand; without --signature it always fails
+  upload_files    task, files: [path, ...], comment
+    Uploads files from the upload directory (--upload-dir, default:
+    kanboard-mcp/uploads in the user cache directory, created at start) and
+    adds one comment: the comment text, the files (images shown inline, other
+    files as download links), and the signature. Files outside the directory
+    (also through a symlink) are refused, so a ticket cannot make the agent
+    publish an arbitrary local file; the agent has to copy the file there first.
+    Larger files than --max-upload-bytes (default 10 MiB) are refused; the PHP
+    limits of the Kanboard server (post_max_size) may be lower.
+  add_task_link   task, relation, other_task   e.g. "12 blocks 34"; relation is
+                  one of Kanboard's link labels (relates to, blocks, is blocked
+                  by, duplicates, is a child of, fixes, ...)
+  remove_task_link      task, link_id   (an id from get_task's links)
+  add_external_link     task, url, title (default: the page title)
+  remove_external_link  task, link_id   (an id from get_task's external_links)
+  move_task       task; column, swimlane, position (1 = top, default: bottom)
+  close_task, open_task   task
+  Each returns a short JSON object about the result (ids, the stored text).
 
   Errors (task not found, no access, bad arguments) are returned as tool errors
   with a message, so the agent can see what went wrong.

@@ -20,11 +20,19 @@ import (
 
 const fakeProject = `{"id":7,"name":"Web","is_active":true,"url":{"board":"http://kb/board/7"}}`
 
-// fakeKanboard answers the read-only procedures the tools use and records the
-// called method names.
+// fakeKanboard answers the procedures the tools use and records the called method
+// names, and the parameters of the calls that change something.
 type fakeKanboard struct {
-	mu    sync.Mutex
-	calls []string
+	mu     sync.Mutex
+	calls  []string
+	writes map[string][]map[string]any
+}
+
+// wrote returns the parameters of the calls to a writing procedure.
+func (f *fakeKanboard) wrote(method string) []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.writes[method]
 }
 
 func (f *fakeKanboard) called(method string) bool {
@@ -45,6 +53,11 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	f.calls = append(f.calls, req.Method)
+	if f.writes == nil {
+		f.writes = make(map[string][]map[string]any)
+	}
+	f.writes[req.Method] = append(f.writes[req.Method], req.Params)
+	nWrites := len(f.writes[req.Method])
 	f.mu.Unlock()
 
 	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 24)...)
@@ -60,9 +73,38 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	result := "null"
 	switch req.Method {
 	case "getTask":
-		if param("task_id") == 1 {
+		switch param("task_id") {
+		case 1:
 			result = `{"id":1,"title":"Login fails","description":"a <b> & c","project_id":7,"is_active":true,"url":"http://kb/task/1"}`
+		case 40:
+			result = `{"id":40,"title":"New","project_id":7,"column_id":2,"swimlane_id":1,"is_active":true,"url":"http://kb/task/40"}`
 		}
+	// --- procedures of the write tools ---
+	case "getComment":
+		switch param("comment_id") {
+		case 20: // written through the server
+			result = `{"id":20,"task_id":1,"user_id":9,"comment":"old\n\n---\n*created by Claude*"}`
+		case 21: // written by hand by the same user
+			result = `{"id":21,"task_id":1,"user_id":9,"comment":"by hand"}`
+		case 22: // signed, but by another user
+			result = `{"id":22,"task_id":1,"user_id":4,"name":"Ann","comment":"x\n\n---\n*created by Claude*"}`
+		}
+	case "createComment":
+		result = "30"
+	case "updateComment":
+		result = "true"
+	case "getColumns":
+		result = `[{"id":1,"title":"Backlog"},{"id":2,"title":"Ready"}]`
+	case "getActiveSwimlanes":
+		result = `[{"id":1,"name":"Default swimlane","is_active":true}]`
+	case "getAllCategories":
+		result = `[{"id":3,"name":"Bug"}]`
+	case "getProjectUsers":
+		result = `{"9":"Agent","4":"Ann"}`
+	case "createTask":
+		result = "40"
+	case "createTaskFile":
+		result = fmt.Sprint(50 + nWrites)
 	case "getAllComments":
 		result = `[{"id":1,"comment":"first","username":"ann"},{"id":2,"comment":"second"},{"id":3,"comment":"third"}]`
 	case "getProjectById":
@@ -99,7 +141,7 @@ func connectOpts(t *testing.T, opts Options) (*mcp.ClientSession, *fakeKanboard)
 	fake := &fakeKanboard{}
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
-	cfg := config.KanboardConfig{ApiUrl: srv.URL + "/jsonrpc.php", Username: "jsonrpc", Password: "x"}
+	cfg := config.KanboardConfig{ApiUrl: srv.URL + "/jsonrpc.php", Username: "jsonrpc", Password: "x", UserId: 9}
 
 	ctx := context.Background()
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()

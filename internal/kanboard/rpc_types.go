@@ -123,26 +123,13 @@ type KbResponseGetAllTasks struct {
 	Result  []KbResponseTask `json:"result"`
 }
 
-type KbCreateCommentRequest struct {
-	JsonRpc string                `json:"jsonrpc"`
-	Method  string                `json:"method"`
-	Id      int                   `json:"id"`
-	Params  KbCreateCommentParams `json:"params"`
-}
-
 type KbCreateCommentParams struct {
 	TaskId  int    `json:"task_id"`
 	UserId  int    `json:"user_id"`
 	Content string `json:"content"`
 }
 
-type KbCreateCommentResponse struct {
-	JsonRpc string `json:"jsonrpc"`
-	Id      int    `json:"id"`
-	Result  int    `json:"result"`
-}
-
-// Generic request/response envelopes for read-only calls. Params is any JSON
+// Generic request/response envelopes. Params is any JSON
 // serializable struct (see the *Param types below); Result is the typed result.
 type KbRequest[P any] struct {
 	JsonRpc string `json:"jsonrpc"`
@@ -183,4 +170,12 @@ type KbSwimlaneIdParam struct {
 
 type KbCategoryIdParam struct {
 	CategoryId int `json:"category_id"`
+}
+
+type KbCommentIdParam struct {
+	CommentId int `json:"comment_id"`
+}
+
+type KbTaskLinkIdParam struct {
+	TaskLinkId int `json:"task_link_id"`
 }

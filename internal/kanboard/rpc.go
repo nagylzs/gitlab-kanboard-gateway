@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/nagylzs/gitlab-kanboard-gateway/internal/config"
@@ -42,7 +45,8 @@ func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, r
 
 	// https://docs.kanboard.org/v1/api/authentication/
 	client := &http.Client{
-		Timeout: time.Second * 10,
+		// Large requests (createTaskFile) get an extra second per 256 KiB.
+		Timeout: time.Second*10 + time.Duration(len(data)/(256*1024))*time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			slog.Warn("Redirected",
 				"from", via[len(via)-1].URL.String(), "to", req.URL.String(), "method", req.Method)
@@ -65,8 +69,10 @@ func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, r
 	if err != nil {
 		return err
 	}
-	//bodyString := string(bodyBytes)
-	//println(bodyString)
+	if !json.Valid(bodyBytes) {
+		// e.g. a PHP fatal error page, or a proxy's error page
+		return fmt.Errorf("Kanboard answered HTTP %v without JSON: %s", response.StatusCode, textSnippet(bodyBytes, 300))
+	}
 
 	var rpcErr KBResponseError
 	err = json.Unmarshal(bodyBytes, &rpcErr)
@@ -89,4 +95,19 @@ func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, r
 		return err
 	}
 	return nil
+}
+
+var (
+	reHtmlTag = regexp.MustCompile(`<[^>]*>`)
+	reSpaces  = regexp.MustCompile(`\s+`)
+)
+
+// textSnippet returns the start of an HTML or text body as one line of plain text.
+func textSnippet(body []byte, n int) string {
+	s := html.UnescapeString(reHtmlTag.ReplaceAllString(string(body), " "))
+	s = strings.TrimSpace(reSpaces.ReplaceAllString(s, " "))
+	if r := []rune(s); len(r) > n {
+		s = string(r[:n]) + "..."
+	}
+	return s
 }
