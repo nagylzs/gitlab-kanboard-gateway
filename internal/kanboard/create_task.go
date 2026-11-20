@@ -14,6 +14,10 @@ type KbCreateTaskParams struct {
 	OwnerId     int      `json:"owner_id,omitempty"`
 	CreatorId   int      `json:"creator_id,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+
+	// Only for CreateTaskGroupAssign (Group_assign plugin).
+	GroupId        int   `json:"group_id,omitempty"`
+	OtherAssignees []int `json:"other_assignees,omitempty"`
 }
 
 // CreateTask returns the id of the new task. Kanboard refuses (false) an owner or
@@ -21,4 +25,13 @@ type KbCreateTaskParams struct {
 func CreateTask(kbCfg config.KanboardConfig, params KbCreateTaskParams) (int, error) {
 	// https://docs.kanboard.org/v1/api/task_procedures/#createtask
 	return writeId(kbCfg, "createTask", params)
+}
+
+// CreateTaskGroupAssign is CreateTask with an assigned group and other assignees.
+// The procedure comes from the Group_assign plugin; without it the error satisfies
+// IsMethodNotFound. Version 1.8.4 refuses (false) a group that is not added to the
+// project and other assignees who cannot be assigned in it.
+func CreateTaskGroupAssign(kbCfg config.KanboardConfig, params KbCreateTaskParams) (int, error) {
+	// https://github.com/creecros/Group_assign/blob/master/Api/Procedure/GroupAssignTaskProcedures.php
+	return writeId(kbCfg, "createTaskGroupAssign", params)
 }

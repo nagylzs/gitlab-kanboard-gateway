@@ -35,6 +35,9 @@ type Editor struct {
 
 	mu     sync.Mutex
 	userId int // cached result of UserId
+	// AssignTask reads the other assignees and writes the changed list; this keeps two
+	// calls of this process from losing each other's change.
+	assignMu sync.Mutex
 }
 
 func NewEditor(cfg config.KanboardConfig, opts Options) *Editor {

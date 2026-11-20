@@ -21,6 +21,9 @@ type CreateTaskInput struct {
 	Category    string   // id or name; default: none
 	Owner       string   // assignee: "me", id, name or username; default: nobody
 	Tags        []string // created in the project when they do not exist yet
+	// Group_assign plugin: the assigned group (id or name) and other assignees (like Owner).
+	Group          string
+	OtherAssignees []string
 }
 
 // TaskResult describes the task after a change.
@@ -33,6 +36,10 @@ type TaskResult struct {
 	Column   *taskdump.NamedRef `json:"column"`
 	Swimlane *taskdump.NamedRef `json:"swimlane"`
 	Position int                `json:"position"`
+	// Only when create_task was given a group or other assignees (read back).
+	AssignedGroup  *taskdump.NamedRef `json:"assigned_group,omitempty"`
+	OtherAssignees []taskdump.UserRef `json:"other_assignees,omitempty"`
+	Warnings       []string           `json:"warnings,omitempty"`
 }
 
 func (e *Editor) CreateTask(in CreateTaskInput) (*TaskResult, error) {
@@ -95,6 +102,18 @@ func (e *Editor) CreateTask(in CreateTaskInput) (*TaskResult, error) {
 		}
 		params.OwnerId = o.id
 	}
+	if in.Group != "" {
+		if params.GroupId, err = e.groupId(in.Group); err != nil {
+			return nil, err
+		}
+	}
+	if refs := nonEmpty(in.OtherAssignees); len(refs) > 0 {
+		ms, err := e.members(projectId, refs)
+		if err != nil {
+			return nil, err
+		}
+		params.OtherAssignees = ids(ms)
+	}
 	if !e.cfg.IsUserAuth() {
 		// A personal token makes its user the creator. With the application token the
 		// creator is Kanboard.UserId, but Kanboard refuses a creator who is not a
@@ -105,11 +124,25 @@ func (e *Editor) CreateTask(in CreateTaskInput) (*TaskResult, error) {
 			}
 		}
 	}
-	id, err := kanboard.CreateTask(e.cfg, params)
-	if err != nil {
-		return nil, refused(err, "check that the owner is a member of the project")
+	grouped := params.GroupId != 0 || len(params.OtherAssignees) > 0
+	create, hint := kanboard.CreateTask, "check that the owner is a member of the project"
+	if grouped {
+		create, hint = kanboard.CreateTaskGroupAssign, hintGroup+"; the same for the owner"
 	}
-	return e.taskResult(id, cols, lanes)
+	id, err := create(e.cfg, params)
+	if err != nil {
+		if kanboard.IsMethodNotFound(err) {
+			return nil, fmt.Errorf("no task was created: a group or other assignees need the Group_assign plugin "+
+				"on the Kanboard server: %w", err)
+		}
+		return nil, refused(err, hint)
+	}
+	res, err := e.taskResult(id, cols, lanes)
+	if err == nil && grouped {
+		a := e.assignResult(id)
+		res.AssignedGroup, res.OtherAssignees, res.Warnings = a.AssignedGroup, a.OtherAssignees, a.Warnings
+	}
+	return res, err
 }
 
 // taskResult reloads a task after a change; cols and lanes may be nil.

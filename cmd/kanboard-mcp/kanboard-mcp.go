@@ -244,7 +244,14 @@ TOOLS THAT CHANGE KANBOARD (only with -w/--writable)
   tell the agent's text from the account owner's.
 
   create_task     project, title (required); description, column, swimlane,
-                  category, owner (me | id | name | username), tags: [name, ...]
+                  category, owner (me | id | name | username), tags: [name, ...],
+                  group, other_assignees: [user, ...]   (Group_assign plugin)
+  assign_task     task; owner (me | user | nobody), group (id | name | none),
+                  other_assignees: [user, ...] (replaces the list) or
+                  add_other_assignees / remove_other_assignees: [user, ...]
+    Only the given fields change. group and the other assignees need the
+    Group_assign plugin, 1.8.4 or newer, on the server; a group must be added
+    to the project, and a non-admin user can give it only by id.
   add_comment     task, content
   update_comment  comment_id, content   only comments of this server's Kanboard
                   user that have a signature footer, so never a comment the

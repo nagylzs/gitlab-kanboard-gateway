@@ -202,6 +202,14 @@ set `Username` to the user's login name and `Password` to a personal access toke
 * Comments restricted to managers or administrators are left out for users below that role.
 * `assignee:me` and similar `me` filters work in `--search` queries.
 
+With the [Group_assign](https://github.com/creecros/Group_assign) plugin on the Kanboard server, a task's
+*Assigned Group* and *Other Assignees* appear as `assigned_group` and `other_assignees`, only on tasks that
+have them. Listing the other assignees needs version 1.8.4 or newer of the plugin (with an older one, a
+warning says so). For a non-administrator the group has only its id, because looking up a group
+(`getGroup`) is admin-only. Without the plugin nothing changes. In searches, `allassignees:<username>` (a
+filter of the plugin) also finds the tasks where the user is one of the other assignees or a member of the
+assigned group.
+
 ```bash
 kanboard-task -c config.yml 13670                    # one task -> JSON object
 kanboard-task -c config.yml 13670 13671              # several tasks -> JSON array
@@ -344,6 +352,7 @@ claude mcp add kanboard -- /path/to/kanboard-mcp --writable --signature Claude /
 | `remove_task_link`     | `unlink TASK LINK_ID`                          | remove a link between tasks                          |
 | `add_external_link`    | `add-url TASK URL [--title ...]`               | attach a URL                                         |
 | `remove_external_link` | `remove-url TASK LINK_ID`                      | remove a URL                                         |
+| `assign_task`          | `assign TASK [--owner] [--group] [--add-other-assignee] ...` | assignee, group, other assignees  |
 | `move_task`            | `move TASK [--column] [--swimlane] [--position]` | another column, swimlane or position              |
 | `close_task`, `open_task` | `close TASK`, `open TASK`                   | close or reopen                                      |
 
@@ -370,6 +379,13 @@ claude mcp add kanboard -- /path/to/kanboard-mcp --writable --signature Claude /
   valid ones. The owner can also be `me`. Relations are Kanboard's link labels (`relates to`, `blocks`,
   `is blocked by`, `duplicates`, `is a child of`, `fixes`, ...); a non-admin personal token cannot list
   them, so then the default labels are used and the created link is checked.
+* **Several assignees.** With the [Group_assign](https://github.com/creecros/Group_assign) plugin, a task
+  can also have an assigned group and other assignees. `create_task` (`--group`, `--other-assignee`) sets
+  them on a new task, and `assign_task` (`assign`) changes the assignee, the group or the other assignees
+  of an existing one, only what is given: `other_assignees` replaces the list, `add_other_assignees` and
+  `remove_other_assignees` change it one by one. `assign_task` needs version 1.8.4 or newer of the plugin;
+  older versions can only overwrite every field at once, which is not used. The group must be added to the
+  project, and a non-administrator can give it only by id, because listing groups is admin-only.
 * `kanboard-task` reads a long text from a file or stdin with `--text-file FILE` (`-` = stdin), and
   `--description-file` for `create-task`. It prints the result as JSON.
 

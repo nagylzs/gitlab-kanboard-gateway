@@ -151,40 +151,68 @@ func (e *Editor) categories(projectId int) ([]named, error) {
 }
 
 // member resolves a project member: "me", a user id, a display name or a username.
-// Usernames are looked up only when the display names do not match, and only where
-// getUser is allowed (application token, admins).
 func (e *Editor) member(projectId int, ref string) (named, error) {
+	m, err := e.members(projectId, []string{ref})
+	if err != nil {
+		return named{}, err
+	}
+	return m[0], nil
+}
+
+// members resolves several project members like member, with one member list.
+// Usernames are looked up only when a display name does not match, and only where
+// getUser is allowed (application token, admins).
+func (e *Editor) members(projectId int, refs []string) ([]named, error) {
 	users, err := kanboard.GetProjectUsers(e.cfg, projectId)
 	if err != nil {
-		return named{}, fmt.Errorf("getProjectUsers: %w", err)
+		return nil, fmt.Errorf("getProjectUsers: %w", err)
 	}
 	items := make([]named, 0, len(users))
 	for id, name := range users {
 		items = append(items, named{id: id, name: name})
 	}
 	slices.SortFunc(items, func(a, b named) int { return a.id - b.id })
-	if strings.EqualFold(strings.TrimSpace(ref), "me") {
-		me, err := e.UserId()
+	withUsernames := false
+	res := make([]named, 0, len(refs))
+	for _, ref := range refs {
+		ref, err := e.resolveMe(ref)
 		if err != nil {
-			return named{}, err
+			return nil, err
 		}
-		ref = strconv.Itoa(me)
-	}
-	if n, err := pick("project member", ref, items); err == nil {
-		return n, nil
-	} else if _, isId := strconv.Atoi(strings.TrimSpace(ref)); isId == nil {
-		return named{}, err
-	}
-	for i := range items {
-		u, err := kanboard.GetUser(e.cfg, items[i].id)
+		n, err := pick("project member", ref, items)
 		if err != nil {
-			break // forbidden for non-admin personal tokens: names only
+			if _, isId := strconv.Atoi(strings.TrimSpace(ref)); isId == nil || withUsernames {
+				return nil, err
+			}
+			withUsernames = true
+			for i := range items {
+				u, err := kanboard.GetUser(e.cfg, items[i].id)
+				if err != nil {
+					break // forbidden for non-admin personal tokens: names only
+				}
+				if u != nil {
+					items[i].alt = u.Username
+				}
+			}
+			if n, err = pick("project member", ref, items); err != nil {
+				return nil, err
+			}
 		}
-		if u != nil {
-			items[i].alt = u.Username
-		}
+		res = append(res, n)
 	}
-	return pick("project member", ref, items)
+	return res, nil
+}
+
+// resolveMe turns "me" into the id of the Kanboard user of this server.
+func (e *Editor) resolveMe(ref string) (string, error) {
+	if !strings.EqualFold(strings.TrimSpace(ref), "me") {
+		return ref, nil
+	}
+	me, err := e.UserId()
+	if err != nil {
+		return "", err
+	}
+	return strconv.Itoa(me), nil
 }
 
 // isMember reports whether user userId is a member of the project.

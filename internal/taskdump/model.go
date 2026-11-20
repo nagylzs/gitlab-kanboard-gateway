@@ -29,8 +29,12 @@ type TaskDocument struct {
 	Reference string `json:"reference"` // free-form external reference field
 	Position  int    `json:"position"`  // position inside the column
 
-	Owner   *UserRef `json:"owner"`   // assignee, null if unassigned
-	Creator *UserRef `json:"creator"` // null if unknown
+	Owner *UserRef `json:"owner"` // assignee, null if unassigned
+	// "Assigned Group" and "Other Assignees" of the Group_assign plugin; only present
+	// when the task has them. Without the plugin there are none.
+	AssignedGroup  *NamedRef `json:"assigned_group,omitempty"`
+	OtherAssignees []UserRef `json:"other_assignees,omitempty"`
+	Creator        *UserRef  `json:"creator"` // null if unknown
 
 	Dates        Dates             `json:"dates"`
 	TimeTracking TimeTracking      `json:"time_tracking"`

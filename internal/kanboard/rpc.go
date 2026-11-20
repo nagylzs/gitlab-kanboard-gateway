@@ -36,6 +36,13 @@ func IsForbidden(err error) bool {
 	return errors.As(err, &rpcErr) && rpcErr.Code == 403
 }
 
+// IsMethodNotFound reports whether the server does not know the procedure, e.g. one
+// that a plugin adds (getTaskGroupAssign) when the plugin is not installed.
+func IsMethodNotFound(err error) bool {
+	var rpcErr *RpcError
+	return errors.As(err, &rpcErr) && rpcErr.Code == -32601
+}
+
 func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, resp *RESP) error {
 	// Connect to server
 	data, err := json.Marshal(req)
@@ -70,8 +77,14 @@ func WebClientRpcCall[REQ any, RESP any](kbCfg config.KanboardConfig, req REQ, r
 		return err
 	}
 	if !json.Valid(bodyBytes) {
-		// e.g. a PHP fatal error page, or a proxy's error page
-		return fmt.Errorf("Kanboard answered HTTP %v without JSON: %s", response.StatusCode, textSnippet(bodyBytes, 300))
+		answer, notice := splitPhpNotice(bodyBytes)
+		if answer == nil {
+			// e.g. a PHP fatal error page, or a proxy's error page
+			return fmt.Errorf("Kanboard answered HTTP %v without JSON: %s", response.StatusCode, textSnippet(bodyBytes, 300))
+		}
+		// The call did run: failing here would make a retried write happen twice.
+		slog.Warn("Kanboard printed a message before its answer", "method", methodOf(data), "message", textSnippet(notice, 300))
+		bodyBytes = answer
 	}
 
 	var rpcErr KBResponseError
@@ -110,4 +123,24 @@ func textSnippet(body []byte, n int) string {
 		s = string(r[:n]) + "..."
 	}
 	return s
+}
+
+// splitPhpNotice splits an answer that PHP prefixed with a notice or warning (with
+// display_errors on, e.g. a plugin's deprecation warning) into the JSON-RPC answer and
+// the notice. answer is nil if the body does not end with a JSON-RPC object.
+func splitPhpNotice(body []byte) (answer, notice []byte) {
+	i := bytes.Index(body, []byte(`{"jsonrpc"`))
+	if i <= 0 || !json.Valid(body[i:]) {
+		return nil, nil
+	}
+	return body[i:], body[:i]
+}
+
+// methodOf returns the method name of an encoded request, for logging.
+func methodOf(request []byte) string {
+	var r struct {
+		Method string `json:"method"`
+	}
+	_ = json.Unmarshal(request, &r)
+	return r.Method
 }

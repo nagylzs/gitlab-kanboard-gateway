@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,6 +27,23 @@ type fakeKanboard struct {
 	mu     sync.Mutex
 	calls  []string
 	writes map[string][]map[string]any
+	// The server's Group_assign plugin is older than 1.8.4 (no getTaskGroupAssign or
+	// patchTaskGroupAssign), or the server has no Group_assign plugin at all.
+	oldGroupAssign atomic.Bool
+	noGroupAssign  atomic.Bool
+}
+
+// count returns how many times a procedure was called.
+func (f *fakeKanboard) count(method string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if c == method {
+			n++
+		}
+	}
+	return n
 }
 
 // wrote returns the parameters of the calls to a writing procedure.
@@ -70,14 +88,39 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	contents := map[int][]byte{5: png, 6: []byte("hello build"), 8: []byte("PK\x03\x04\x00\x00\x00\x00"), 10: []byte("evil")}
 
+	plugin := map[string]bool{"createTaskGroupAssign": true, "getTaskGroupAssign": true, "patchTaskGroupAssign": true}
+	if plugin[req.Method] && (f.noGroupAssign.Load() || f.oldGroupAssign.Load() && req.Method != "createTaskGroupAssign") {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}`)
+		return
+	}
+
 	result := "null"
 	switch req.Method {
 	case "getTask":
 		switch param("task_id") {
 		case 1:
 			result = `{"id":1,"title":"Login fails","description":"a <b> & c","project_id":7,"is_active":true,"url":"http://kb/task/1"}`
+		case 3: // Group_assign plugin fields
+			result = `{"id":3,"title":"Shared","project_id":7,"is_active":true,"owner_gp":2,"owner_ms":5,"url":"http://kb/task/3"}`
 		case 40:
 			result = `{"id":40,"title":"New","project_id":7,"column_id":2,"swimlane_id":1,"is_active":true,"url":"http://kb/task/40"}`
+		}
+	case "getGroup":
+		if param("group_id") == 2 {
+			result = `{"id":2,"external_id":"","name":"Devs"}`
+		}
+	case "getAllGroups":
+		result = `[{"id":2,"external_id":"","name":"Devs"},{"id":5,"external_id":"","name":"Ops"}]`
+	case "createTaskGroupAssign":
+		result = "3" // the task with a group and other assignees
+	case "patchTaskGroupAssign", "updateTask":
+		result = "true"
+	case "getTaskGroupAssign":
+		result = "false"
+		if param("id") == 3 {
+			result = `{"task_id":3,"group_id":2,"other_assignee_ids":[4,9],"multiselect_id":5,"other_assignees":[` +
+				`{"id":4,"username":"ann","name":"Ann","email":"","is_active":true,"avatar_path":null},` +
+				`{"id":9,"username":"agent","name":"Agent","email":"agent@example.com","is_active":true,"avatar_path":null}]}`
 		}
 	// --- procedures of the write tools ---
 	case "getComment":
@@ -425,5 +468,85 @@ func TestDownloadAttachmentsWithoutDirectory(t *testing.T) {
 	res, text := call(t, session, "download_attachments", map[string]any{"file_ids": []int{6}})
 	if !res.IsError || !strings.Contains(text, "--download-dir") {
 		t.Errorf("want an error about the missing directory, got IsError=%v %q", res.IsError, text)
+	}
+}
+
+// groupAssignDoc is the part of a get_task entry that the Group_assign plugin fills.
+type groupAssignDoc struct {
+	Id            int
+	AssignedGroup *struct {
+		Id   int
+		Name string
+	} `json:"assigned_group"`
+	OtherAssignees []struct {
+		Id       int
+		Username string
+	} `json:"other_assignees"`
+	Warnings []string
+}
+
+func getGroupAssignDocs(t *testing.T, session *mcp.ClientSession, args map[string]any) ([]groupAssignDoc, string) {
+	t.Helper()
+	res, text := call(t, session, "get_task", args)
+	if res.IsError {
+		t.Fatal(text)
+	}
+	var docs []groupAssignDoc
+	if err := json.Unmarshal([]byte(text), &docs); err != nil {
+		t.Fatal(err)
+	}
+	return docs, text
+}
+
+func TestGetTaskGroupAssign(t *testing.T) {
+	session, fake := connect(t)
+	docs, text := getGroupAssignDocs(t, session, map[string]any{"tasks": []string{"3", "1"}})
+	if len(docs) != 2 {
+		t.Fatalf("want 2 tasks: %s", text)
+	}
+	shared := docs[0]
+	if g := shared.AssignedGroup; g == nil || g.Id != 2 || g.Name != "Devs" {
+		t.Errorf("assigned_group = %+v, want {2 Devs}: %s", g, text)
+	}
+	if o := shared.OtherAssignees; len(o) != 2 || o[0].Username != "ann" || o[1].Id != 9 {
+		t.Errorf("other_assignees = %+v, want ann and agent: %s", o, text)
+	}
+	if len(shared.Warnings) != 0 {
+		t.Errorf("unexpected warnings: %v", shared.Warnings)
+	}
+	// Task 1 has no owner_gp/owner_ms (as on a server without the plugin): the
+	// fields are left out and the plugin's procedure is not called for it.
+	if _, plain, _ := strings.Cut(text, `{"id":1,`); strings.Contains(plain, "assigned_group") || strings.Contains(plain, "other_assignees") {
+		t.Errorf("task 1 should have no group fields: %s", text)
+	}
+	if n := fake.count("getTaskGroupAssign"); n != 1 {
+		t.Errorf("getTaskGroupAssign called %v times, want 1 (only for task 3)", n)
+	}
+
+	session, fake = connect(t)
+	getGroupAssignDocs(t, session, map[string]any{"tasks": []string{"3"}, "fields": []string{"title"}})
+	for _, skipped := range []string{"getGroup", "getTaskGroupAssign"} {
+		if fake.called(skipped) {
+			t.Errorf("%v was called although its field was not requested", skipped)
+		}
+	}
+}
+
+func TestGetTaskGroupAssignOldPlugin(t *testing.T) {
+	session, fake := connect(t)
+	fake.oldGroupAssign.Store(true)
+	docs, text := getGroupAssignDocs(t, session, map[string]any{"tasks": []string{"3"}})
+	if len(docs) != 1 {
+		t.Fatalf("want 1 task: %s", text)
+	}
+	doc := docs[0]
+	if g := doc.AssignedGroup; g == nil || g.Name != "Devs" {
+		t.Errorf("the group comes from getTask and should still be there: %s", text)
+	}
+	if doc.OtherAssignees != nil {
+		t.Errorf("other_assignees should be left out: %s", text)
+	}
+	if len(doc.Warnings) != 1 || !strings.Contains(doc.Warnings[0], "Group_assign plugin 1.8.4") {
+		t.Errorf("want a warning about the plugin version, got %v", doc.Warnings)
 	}
 }

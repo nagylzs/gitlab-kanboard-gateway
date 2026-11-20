@@ -13,7 +13,7 @@ Three Go binaries sharing one config file and one Kanboard JSON-RPC client, no d
 - **`kanboard-task`** (CLI): dumps one or more tasks as agent-friendly JSON (description, comments,
   attachments, subtasks, links, resolved names). Built for AI agents that need to read tickets. With
   `-w/--writable` its go-flags subcommands (`create-task`, `comment`, `edit-comment`, `upload`, `link`,
-  `unlink`, `add-url`, `remove-url`, `move`, `close`, `open`) change Kanboard; without it, it must never call
+  `unlink`, `add-url`, `remove-url`, `assign`, `move`, `close`, `open`) change Kanboard; without it, it must never call
   a Kanboard procedure that modifies data.
 - **`kanboard-mcp`** (MCP server over stdio): the same data as MCP tools `get_task` (with `fields`
   and `max_comments`), `search_tasks`, `get_attachment` and `download_attachments`. Same read-only rule as
@@ -43,7 +43,7 @@ go run ./cmd/kanboard-mcp --info                        # documents the MCP tool
 go test ./...                  # unit tests (taskdump, taskedit) + MCP tool tests against a fake Kanboard (mcpserver)
 ```
 
-Tests: `internal/taskdump` (`TestRewriteEmbeddedFiles`, `TestSanitizeFileName*`), `internal/taskedit`
+Tests: `internal/kanboard` (`TestRpcAnswerAfterPhpNotice`), `internal/taskdump` (`TestRewriteEmbeddedFiles`, `TestSanitizeFileName*`), `internal/taskedit`
 (signature footer, name matching) and `internal/mcpserver`, which connects an SDK client
 over in-memory transports to the server, backed by an `httptest` fake of the Kanboard JSON-RPC endpoint (no
 network, no credentials; `write_test.go` covers the write tools). CI (`.github/workflows/go.yml`) does not run tests and only builds
@@ -101,7 +101,9 @@ Supporting packages:
 - **`internal/kanboard`** – thin JSON-RPC 2.0 client. `WebClientRpcCall[REQ, RESP]` in `rpc.go` does the
   generic POST with HTTP basic auth (`Username` `"jsonrpc"` + the application API token, or, for `kanboard-task`
   only, a real login + personal access token: see `KanboardConfig.IsUserAuth`), checks for
-  an RPC `error` object, then unmarshals into the typed response. Each API method is its own file
+  an RPC `error` object, then unmarshals into the typed response. An answer that PHP prefixed with a notice
+  (display_errors on, e.g. a plugin's deprecation warning on PHP 8.4+) is still accepted, with a log warning,
+  because the call did run (`splitPhpNotice`; failing would make a retried write happen twice). Each API method is its own file
   (`get_task.go`, `get_all_comments.go`, `create_comment.go`, ...). New read calls use the generic
   `KbRequest[P]` / `KbResponse[R]` envelopes plus a `Kb*IdParam` struct (see `rpc_types.go`); result structs for
   the task-detail procedures live in `rpc_types_details.go`. Write calls use `writeId` / `writeOk`
@@ -129,14 +131,21 @@ Supporting packages:
   modification time. `comments.go` rewrites the relative `<img src="?controller=FileViewerController...">` tags Kanboard inserts
   for pasted screenshots into markdown images (attachments are therefore collected before comments).
   `Options.Fields` skips the API calls behind unrequested top-level fields (`Dumper.want`), and
-  `Options.MaxComments` keeps the newest N comments and sets `comments_omitted`. `select.go` derives
+  `Options.MaxComments` keeps the newest N comments and sets `comments_omitted`. `assigned_group` and
+  `other_assignees` come from the optional Group_assign plugin: `getTask` then also returns `owner_gp`/`owner_ms`
+  (0 or absent without the plugin, and then no plugin procedure is called), the group name comes from the
+  admin-only `getGroup`, the users from the plugin's `getTaskGroupAssign` (1.8.4+; "Method not found" from an
+  older plugin becomes a warning, see `kanboard.IsMethodNotFound`). `select.go` derives
   `TaskFields` from the `TaskDocument` json tags (so new model fields become selectable automatically) and
   `SelectFields` encodes only the selected keys in model order; `MarshalJSON` is the non-HTML-escaping encoder.
 - **`internal/taskedit`** – the changes behind `--writable` (`Editor`, shared by both binaries). Resolves
   projects/columns/swimlanes/categories/users by id or name (`resolve.go`, errors list the valid names),
   `signature.go` builds and parses the footer (`---` then `*created by X, modified by Y*`), `upload.go`
   confines uploads to the upload dir and posts one comment with markdown links to the new files. The comment
-  author is `getMe` with a personal token, `Kanboard.UserId` with the `jsonrpc` token. Link types
+  author is `getMe` with a personal token, `Kanboard.UserId` with the `jsonrpc` token. `assign.go` sets the
+  Group_assign plugin's group and other assignees (`createTaskGroupAssign` for a new task, `patchTaskGroupAssign`
+  for an existing one, which needs plugin 1.8.4+; never the plugin's `updateTaskGroupAssign`, which resets the
+  fields it is not given) and the owner (`updateTask` with only `owner_id`). Link types
   (`getAllLinks`) are admin-only for personal tokens, so it falls back to Kanboard's default labels and
   checks the created link's label.
 - **`internal/mcpserver`** – the `kanboard-mcp` tools on top of `taskdump` (and `taskedit` in `write.go`). Each call builds its own `Dumper`

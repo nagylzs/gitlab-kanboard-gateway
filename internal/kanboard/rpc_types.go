@@ -179,3 +179,13 @@ type KbCommentIdParam struct {
 type KbTaskLinkIdParam struct {
 	TaskLinkId int `json:"task_link_id"`
 }
+
+type KbGroupIdParam struct {
+	GroupId int `json:"group_id"`
+}
+
+// KbIdParam is for plugin procedures whose only parameter is called "id"
+// (getTaskGroupAssign).
+type KbIdParam struct {
+	Id int `json:"id"`
+}

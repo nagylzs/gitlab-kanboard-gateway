@@ -60,6 +60,7 @@ type opts struct {
 	Unlink      unlinkCmd      `command:"unlink" description:"Remove an internal link of a task (needs --writable)"`
 	AddUrl      addUrlCmd      `command:"add-url" description:"Attach a URL to a task (needs --writable)"`
 	RemoveUrl   unlinkCmd      `command:"remove-url" description:"Remove an external link of a task (needs --writable)"`
+	Assign      assignCmd      `command:"assign" description:"Change the assignee, group or other assignees of a task (needs --writable)"`
 	Move        moveCmd        `command:"move" description:"Move a task to another column, swimlane or position (needs --writable)"`
 	Close       taskCmd        `command:"close" description:"Close a task (needs --writable)"`
 	Open        taskCmd        `command:"open" description:"Reopen a task (needs --writable)"`
@@ -100,6 +101,8 @@ type createTaskCmd struct {
 	Category        string   `long:"category" description:"Category id or name"`
 	Owner           string   `long:"owner" description:"Assignee: me, user id, name or username"`
 	Tags            []string `long:"tag" description:"Tag; repeatable"`
+	Group           string   `long:"group" description:"Assigned group, id or name (Group_assign plugin)"`
+	OtherAssignees  []string `long:"other-assignee" description:"Other assignee: me, user id, name or username (Group_assign plugin); repeatable" value-name:"USER"`
 	Args            struct {
 		Project string `positional-arg-name:"PROJECT" description:"Project id or name"`
 		Title   string `positional-arg-name:"TITLE"`
@@ -148,6 +151,18 @@ type addUrlCmd struct {
 	Args  struct {
 		Task string `positional-arg-name:"TASK"`
 		Url  string `positional-arg-name:"URL"`
+	} `positional-args:"yes" required:"yes"`
+}
+
+type assignCmd struct {
+	Owner          string   `long:"owner" description:"Assignee: me, user id, name or username; nobody removes it"`
+	Group          string   `long:"group" description:"Assigned group, id or name; none removes it (Group_assign plugin)"`
+	OtherAssignees []string `long:"other-assignee" description:"Replace the other assignees with these users; repeatable" value-name:"USER"`
+	NoOthers       bool     `long:"no-other-assignees" description:"Remove all other assignees"`
+	Add            []string `long:"add-other-assignee" description:"Add an other assignee; repeatable" value-name:"USER"`
+	Remove         []string `long:"remove-other-assignee" description:"Remove an other assignee; repeatable" value-name:"USER"`
+	Args           struct {
+		Task string `positional-arg-name:"TASK"`
 	} `positional-args:"yes" required:"yes"`
 }
 
@@ -342,6 +357,7 @@ func runCommand(o opts, name string) int {
 		res, err = ed.CreateTask(taskedit.CreateTaskInput{
 			Project: c.Args.Project, Title: c.Args.Title, Description: desc,
 			Column: c.Column, Swimlane: c.Swimlane, Category: c.Category, Owner: c.Owner, Tags: c.Tags,
+			Group: c.Group, OtherAssignees: c.OtherAssignees,
 		})
 	case "comment", "edit-comment", "upload":
 		var t textOpts
@@ -374,6 +390,18 @@ func runCommand(o opts, name string) int {
 		res, err = ed.AddExternalLink(o.AddUrl.Args.Task, o.AddUrl.Args.Url, o.AddUrl.Title)
 	case "remove-url":
 		res, err = ed.RemoveExternalLink(o.RemoveUrl.Args.Task, o.RemoveUrl.Args.LinkId)
+	case "assign":
+		c := o.Assign
+		in := taskedit.AssignInput{Owner: c.Owner, Group: c.Group, OtherAssignees: c.OtherAssignees,
+			AddOtherAssignees: c.Add, RemoveOtherAssignees: c.Remove}
+		if c.NoOthers {
+			if len(c.OtherAssignees) > 0 {
+				fmt.Fprintln(os.Stderr, "error: give --other-assignee or --no-other-assignees, not both")
+				return exitUsage
+			}
+			in.OtherAssignees = []string{}
+		}
+		res, err = ed.AssignTask(c.Args.Task, in)
 	case "move":
 		res, err = ed.MoveTask(o.Move.Args.Task, o.Move.Column, o.Move.Swimlane, o.Move.Position)
 	case "close":
@@ -450,6 +478,13 @@ JSON FIELDS (top level)
   category {id,name} | null
   color, priority, score, reference, position
   owner {id,username,name,email} | null      the assignee (see AUTHENTICATION)
+  assigned_group {id,name}      "Assigned Group" of the Group_assign plugin; only
+                                present when set. name is empty for a non-admin
+                                user (looking up a group is admin-only).
+  other_assignees [{id,username,name,email}]
+                                "Other Assignees" of the Group_assign plugin; only
+                                present when set, and listed only if the plugin is
+                                1.8.4 or newer (otherwise a warning says so)
   creator {id,username,name,email} | null
   dates {created,modified,moved,started,due,completed}   RFC3339 or null
   time_tracking {spent_hours,estimated_hours}
@@ -486,6 +521,8 @@ SEARCH (--search QUERY)
   title:"...", description:..., comment:..., tag:..., column:..., category:...,
   created:>=2026-01-01 can be combined ("me", as in assignee:me, works only with a
   personal token). Without a status: filter both open and closed tasks are returned.
+  With the Group_assign plugin, allassignees:<username> also finds the tasks where
+  the user is one of the other assignees or a member of the assigned group.
 
   query, projects_searched
   total, truncated              total counts every hit; tasks is cut to --limit
@@ -506,6 +543,7 @@ SEARCH (--search QUERY)
 COMMANDS (change Kanboard; only with -w/--writable)
   create-task PROJECT TITLE [--description TEXT | --description-file FILE]
               [--column C] [--swimlane S] [--category C] [--owner U] [--tag T]...
+              [--group G] [--other-assignee U]...
   comment TASK (--text TEXT | --text-file FILE)
   edit-comment COMMENT_ID (--text TEXT | --text-file FILE)
   upload TASK FILE... [--text TEXT | --text-file FILE]
@@ -513,6 +551,9 @@ COMMANDS (change Kanboard; only with -w/--writable)
   unlink TASK LINK_ID               LINK_ID from the task's links
   add-url TASK URL [--title TITLE]
   remove-url TASK LINK_ID           LINK_ID from the task's external_links
+  assign TASK [--owner U|nobody] [--group G|none]
+              [--other-assignee U... | --no-other-assignees]
+              [--add-other-assignee U]... [--remove-other-assignee U]...
   move TASK [--column C] [--swimlane S] [--position N]   (1 = top, default: bottom)
   close TASK, open TASK
 
@@ -523,6 +564,12 @@ COMMANDS (change Kanboard; only with -w/--writable)
   Projects, columns, swimlanes, categories and users are given by id or name
   (exact, or a part of exactly one name, case-insensitive); a wrong name is
   refused with the list of valid ones. --owner also accepts "me" and usernames.
+
+  --group and the other assignees need the Group_assign plugin on the server,
+  assign needs version 1.8.4 or newer of it. A group must be added to the
+  project; a non-admin user can give it only by id. assign changes only what
+  is given; --other-assignee replaces the whole list, --add-/--remove-other-
+  assignee change it one by one. Nothing is changed if a name is wrong.
   RELATION is a Kanboard link label: relates to, blocks, is blocked by,
   duplicates, is duplicated by, is a child of, is a parent of, fixes, ...
 

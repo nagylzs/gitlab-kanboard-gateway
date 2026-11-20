@@ -1,6 +1,7 @@
 package taskdump
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -32,6 +33,11 @@ type Dumper struct {
 	// members of the task's project instead (cached per project).
 	getUserForbidden bool
 	projectUsers     map[int]projectUsers
+	// Group_assign plugin: group names (getGroup is admin-only too), and whether
+	// the server lacks getTaskGroupAssign (plugin older than 1.8.4).
+	groups              map[int]*NamedRef
+	getGroupForbidden   bool
+	noTaskGroupAssignFn bool
 }
 
 type projectUsers struct {
@@ -40,7 +46,8 @@ type projectUsers struct {
 }
 
 func NewDumper(cfg config.KanboardConfig, opts Options) *Dumper {
-	return &Dumper{cfg: cfg, opts: opts, users: make(map[int]*UserRef), projectUsers: make(map[int]projectUsers)}
+	return &Dumper{cfg: cfg, opts: opts, users: make(map[int]*UserRef), projectUsers: make(map[int]projectUsers),
+		groups: make(map[int]*NamedRef)}
 }
 
 // ErrNotFound is returned by Dump when the task id does not exist.
@@ -148,6 +155,14 @@ func (d *Dumper) Dump(taskId int) (*TaskDocument, error) {
 	}
 	if d.want("owner") {
 		doc.Owner = d.user(task.OwnerId, task.ProjectId, warn)
+	}
+	// Without the Group_assign plugin, getTask has no owner_gp/owner_ms, so they are 0
+	// and the plugin's procedures are never called.
+	if task.OwnerGp != 0 && d.want("assigned_group") {
+		doc.AssignedGroup = d.group(task.OwnerGp, warn)
+	}
+	if task.OwnerMs != 0 && d.want("other_assignees") {
+		doc.OtherAssignees = d.otherAssignees(taskId, warn)
 	}
 	if d.want("creator") {
 		doc.Creator = d.user(task.CreatorId, task.ProjectId, warn)
@@ -345,6 +360,65 @@ func (d *Dumper) user(id int, projectId int, warn func(string, error)) *UserRef 
 	d.users[id] = ref
 	return ref
 }
+
+// group resolves the id of a Group_assign group to its name (cached). getGroup is
+// admin-only, so a non-admin personal token gets only the id.
+func (d *Dumper) group(id int, warn func(string, error)) *NamedRef {
+	if g, ok := d.groups[id]; ok {
+		return g
+	}
+	if d.getGroupForbidden {
+		warn("assigned_group", errGroupNameForbidden)
+		return &NamedRef{Id: id}
+	}
+	g, err := kanboard.GetGroup(d.cfg, id)
+	switch {
+	case kanboard.IsForbidden(err):
+		d.getGroupForbidden = true
+		warn("assigned_group", errGroupNameForbidden)
+		return &NamedRef{Id: id}
+	case err != nil:
+		warn(fmt.Sprintf("getGroup %v", id), err)
+		return &NamedRef{Id: id}
+	}
+	ref := &NamedRef{Id: id}
+	if g != nil {
+		ref.Name = g.Name
+	}
+	d.groups[id] = ref
+	return ref
+}
+
+var errGroupNameForbidden = errors.New("only the group id is known, looking up a group (getGroup) is admin-only")
+
+// otherAssignees returns the "Other Assignees" of a task, which needs the
+// Group_assign plugin 1.8.4 or newer on the server.
+func (d *Dumper) otherAssignees(taskId int, warn func(string, error)) []UserRef {
+	if d.noTaskGroupAssignFn {
+		warn("other_assignees", errNoTaskGroupAssign)
+		return nil
+	}
+	ga, err := kanboard.GetTaskGroupAssign(d.cfg, taskId)
+	switch {
+	case kanboard.IsMethodNotFound(err):
+		d.noTaskGroupAssignFn = true
+		warn("other_assignees", errNoTaskGroupAssign)
+		return nil
+	case err != nil:
+		warn("getTaskGroupAssign", err)
+		return nil
+	case ga == nil:
+		return nil
+	}
+	var users []UserRef
+	for _, u := range ga.OtherAssignees {
+		users = append(users, UserRef{Id: u.Id, Username: u.Username, Name: u.Name, Email: u.Email})
+	}
+	return users
+}
+
+var errNoTaskGroupAssign = errors.New("the task has other assignees, but the server cannot list them: " +
+	"that needs the Group_assign plugin 1.8.4 or newer (getTaskGroupAssign)")
 
 // --- helpers ---
 

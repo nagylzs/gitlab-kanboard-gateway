@@ -19,6 +19,8 @@ Reading:
 Changing (in the name of the Kanboard user of this server; descriptions and comments you write get a signature footer, ` +
 	`do not write one yourself):
 - create_task: new task in a project.
+- assign_task: change the assignee; with the Group_assign plugin also the assigned group and the other assignees
+  (several users on one task).
 - add_comment, update_comment: comment on a task; edit a comment written through this server (not a person's).
 - upload_files: attach local files from the upload directory to a task, with a comment that shows them.
 - add_task_link, remove_task_link: links between tasks ("blocks", "relates to", ...).
@@ -49,6 +51,7 @@ func addWriteTools(s *mcp.Server, cfg config.KanboardConfig, opts Options) {
 	mcp.AddTool(s, removeTaskLinkTool(), w.removeTaskLink)
 	mcp.AddTool(s, addExternalLinkTool(), w.addExternalLink)
 	mcp.AddTool(s, removeExternalLinkTool(), w.removeExternalLink)
+	mcp.AddTool(s, assignTaskTool(), w.assignTask)
 	mcp.AddTool(s, moveTaskTool(), w.moveTask)
 	mcp.AddTool(s, setStatusTool("close_task", "Close a Kanboard task", "Closes a task (it stays where it is on the board). "+
 		"Closing a closed task changes nothing."), w.closeTask)
@@ -81,18 +84,23 @@ type createTaskInput struct {
 	Category    string   `json:"category,omitempty" jsonschema:"Category id or name (default: none)"`
 	Owner       string   `json:"owner,omitempty" jsonschema:"Assignee: me, a user id, name or username; must be a project member (default: nobody)"`
 	Tags        []string `json:"tags,omitempty" jsonschema:"Tags; new ones are created in the project"`
+	Group       string   `json:"group,omitempty" jsonschema:"Assigned group (needs the Group_assign plugin): group id or name; the group must be added to the project"`
+	Others      []string `json:"other_assignees,omitempty" jsonschema:"Other assignees besides the owner (needs the Group_assign plugin): me, user ids, names or usernames of project members"`
 }
 
 func createTaskTool() *mcp.Tool {
 	schema := mustSchema[createTaskInput]()
 	schema.Properties["project"].MinLength = ptr(1)
 	schema.Properties["title"].MinLength = ptr(1)
-	tags := schema.Properties["tags"]
-	tags.Types, tags.Type = nil, "array"
+	for _, name := range []string{"tags", "other_assignees"} {
+		p := schema.Properties[name]
+		p.Types, p.Type = nil, "array"
+	}
 	return &mcp.Tool{
 		Name:  "create_task",
 		Title: "Create a Kanboard task",
 		Description: `Creates a task and returns a JSON object: id, url, title, status, project, column, swimlane, position. ` +
+			`With a group or other assignees, also assigned_group and other_assignees. ` +
 			`A signature footer is added below the description. Names are matched case-insensitively; ` +
 			`a wrong name is refused with the list of valid ones.`,
 		InputSchema: schema,
@@ -104,8 +112,49 @@ func (w *writeTools) createTask(_ context.Context, _ *mcp.CallToolRequest, in cr
 	res, err := w.ed.CreateTask(taskedit.CreateTaskInput{
 		Project: in.Project, Title: in.Title, Description: in.Description,
 		Column: in.Column, Swimlane: in.Swimlane, Category: in.Category, Owner: in.Owner, Tags: in.Tags,
+		Group: in.Group, OtherAssignees: in.Others,
 	})
 	return done("create_task", res, err)
+}
+
+// --- assign_task ---
+
+type assignTaskInput struct {
+	Task   string   `json:"task" jsonschema:"Task id (123), #KB123 reference or task URL"`
+	Owner  string   `json:"owner,omitempty" jsonschema:"New assignee: me, a user id, name or username of a project member; nobody removes the assignee (default: unchanged)"`
+	Group  string   `json:"group,omitempty" jsonschema:"Assigned group (Group_assign plugin): group id or name, the group must be added to the project; none removes the group (default: unchanged)"`
+	Others []string `json:"other_assignees,omitempty" jsonschema:"Replaces all other assignees (Group_assign plugin): me, user ids, names or usernames of project members; an empty list removes them all (default: unchanged)"`
+	Add    []string `json:"add_other_assignees,omitempty" jsonschema:"Users to add to the other assignees; the others stay"`
+	Remove []string `json:"remove_other_assignees,omitempty" jsonschema:"Users to remove from the other assignees; the others stay"`
+}
+
+func assignTaskTool() *mcp.Tool {
+	schema := mustSchema[assignTaskInput]()
+	schema.Properties["task"].MinLength = ptr(1)
+	for _, name := range []string{"other_assignees", "add_other_assignees", "remove_other_assignees"} {
+		p := schema.Properties[name]
+		p.Types, p.Type = nil, "array"
+	}
+	return &mcp.Tool{
+		Name:  "assign_task",
+		Title: "Assign a Kanboard task",
+		Description: `Changes who a task is assigned to: the assignee (owner) and, with Kanboard's Group_assign plugin ` +
+			`(1.8.4 or newer), the assigned group and the other assignees, so that several users share the task. ` +
+			`Only the given fields change. To add or remove a few other assignees use add_other_assignees / ` +
+			`remove_other_assignees; other_assignees replaces the whole list. Nothing is changed when a name is wrong ` +
+			`(the error lists the valid ones) or the plugin is missing. Returns a JSON object: id, url, title, owner, ` +
+			`assigned_group, other_assignees.`,
+		InputSchema: schema,
+		Annotations: changingIdempotent,
+	}
+}
+
+func (w *writeTools) assignTask(_ context.Context, _ *mcp.CallToolRequest, in assignTaskInput) (*mcp.CallToolResult, any, error) {
+	res, err := w.ed.AssignTask(in.Task, taskedit.AssignInput{
+		Owner: in.Owner, Group: in.Group, OtherAssignees: in.Others,
+		AddOtherAssignees: in.Add, RemoveOtherAssignees: in.Remove,
+	})
+	return done("assign_task", res, err)
 }
 
 // --- comments ---

@@ -107,7 +107,8 @@ func getTaskTool() *mcp.Tool {
 		Name:  "get_task",
 		Title: "Get Kanboard tasks",
 		Description: `Returns everything about one or more Kanboard tasks as a JSON array, one object per requested task, in the requested order: ` +
-			`title, description (markdown), status, project, column, swimlane, category, owner (the assignee), creator, dates (RFC 3339), ` +
+			`title, description (markdown), status, project, column, swimlane, category, owner (the assignee), ` +
+			`assigned_group and other_assignees (Kanboard's Group_assign plugin, present only when set), creator, dates (RFC 3339), ` +
 			`time_tracking, tags, metadata, subtasks, comments (markdown, oldest first), attachments, links to other tasks and external_links. ` +
 			`Ids are resolved to names. A task that could not be loaded is returned as {"id": N, "error": "..."}. ` +
 			`A "warnings" list means some part of the task could not be loaded; that part is then empty. ` +
@@ -182,7 +183,9 @@ func searchTasksTool() *mcp.Tool {
 			`Query syntax: plain words match title and description; filters such as status:open, status:closed, assignee:<username>, ` +
 			`creator:<username>, title:"...", description:..., comment:..., tag:..., column:..., category:..., created:>=2026-01-01 ` +
 			`can be combined with spaces. Without a status: filter both open and closed tasks match. ` +
-			`"me" (assignee:me) is the Kanboard user of this server and works only if it logs in with a personal token.`,
+			`"me" (assignee:me) is the Kanboard user of this server and works only if it logs in with a personal token. ` +
+			`If the server has the Group_assign plugin, allassignees:<username> also finds the tasks where the user is one of the ` +
+			`other assignees or a member of the assigned group (part of a username or name matches too).`,
 		InputSchema: schema,
 		Annotations: readOnly,
 	}

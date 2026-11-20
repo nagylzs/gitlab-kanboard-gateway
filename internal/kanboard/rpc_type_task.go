@@ -39,4 +39,9 @@ type KbResponseTask struct {
 		Background string `json:"background"`
 		Border     string `json:"border"`
 	} `json:"color"`
+
+	// Added by the Group_assign plugin (0 without it): the "Assigned Group" id, and
+	// the id of the user set that holds the "Other Assignees" (see GetTaskGroupAssign).
+	OwnerGp int `json:"owner_gp"`
+	OwnerMs int `json:"owner_ms"`
 }

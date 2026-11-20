@@ -114,3 +114,29 @@ type KbResponseTaskLinkById struct {
 	Label          string `json:"label"`
 	OppositeLinkId int    `json:"opposite_link_id"`
 }
+
+// https://docs.kanboard.org/v1/api/group_procedures/#getgroup
+type KbResponseGroup struct {
+	Id         int    `json:"id"`
+	ExternalId string `json:"external_id"`
+	Name       string `json:"name"`
+}
+
+// getTaskGroupAssign of the Group_assign plugin (1.8.4 or newer,
+// https://github.com/creecros/Group_assign): the "Assigned Group" and "Other
+// Assignees" of a task.
+type KbTaskGroupAssign struct {
+	TaskId           int                 `json:"task_id"`
+	GroupId          int                 `json:"group_id"` // 0 = no group
+	OtherAssigneeIds []int               `json:"other_assignee_ids"`
+	OtherAssignees   []KbGroupAssignUser `json:"other_assignees"`
+	MultiselectId    int                 `json:"multiselect_id"` // the task's owner_ms
+}
+
+// The plugin also returns avatar_path and is_active; only the fields we need.
+type KbGroupAssignUser struct {
+	Id       int    `json:"id"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+}
