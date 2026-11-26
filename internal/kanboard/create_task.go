@@ -14,6 +14,7 @@ type KbCreateTaskParams struct {
 	OwnerId     int      `json:"owner_id,omitempty"`
 	CreatorId   int      `json:"creator_id,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+	ColorId     string   `json:"color_id,omitempty"` // default: the server's default color
 
 	// Only for CreateTaskGroupAssign (Group_assign plugin).
 	GroupId        int   `json:"group_id,omitempty"`
@@ -21,7 +22,8 @@ type KbCreateTaskParams struct {
 }
 
 // CreateTask returns the id of the new task. Kanboard refuses (false) an owner or
-// creator that is not a member of the project; unknown tags are created.
+// creator that is not a member of the project, and a color id that is not in
+// GetColorList; unknown tags are created.
 func CreateTask(kbCfg config.KanboardConfig, params KbCreateTaskParams) (int, error) {
 	// https://docs.kanboard.org/v1/api/task_procedures/#createtask
 	return writeId(kbCfg, "createTask", params)

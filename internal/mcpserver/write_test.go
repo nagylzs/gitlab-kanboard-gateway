@@ -15,7 +15,7 @@ import (
 
 var writeToolNames = []string{
 	"add_comment", "add_external_link", "add_task_link", "assign_task", "close_task", "create_task", "move_task", "open_task",
-	"remove_external_link", "remove_task_link", "update_comment", "upload_files",
+	"remove_external_link", "remove_task_link", "set_task_color", "update_comment", "upload_files",
 }
 
 func connectWritable(t *testing.T, signature string) (*mcp.ClientSession, *fakeKanboard, string) {

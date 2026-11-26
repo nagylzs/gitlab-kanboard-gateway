@@ -233,6 +233,11 @@ TOOLS (read-only)
     same file is replaced. Without --writable this is the only tool that writes
     anything, and only below DIR, never to Kanboard.
 
+  list_task_colors   (no arguments)
+    Returns the JSON object kanboard-task --colors prints: default (the color
+    of a task created without one) and colors [{id, name, background,
+    border}]. get_task's color is one of these ids.
+
 TOOLS THAT CHANGE KANBOARD (only with -w/--writable)
   Without --writable these tools do not exist. None of them deletes a task, a
   comment or an attachment. Tasks, columns, users and so on can be given by id
@@ -245,13 +250,16 @@ TOOLS THAT CHANGE KANBOARD (only with -w/--writable)
 
   create_task     project, title (required); description, column, swimlane,
                   category, owner (me | id | name | username), tags: [name, ...],
-                  group, other_assignees: [user, ...]   (Group_assign plugin)
+                  group, other_assignees: [user, ...]   (Group_assign plugin),
+                  color (id | name, from list_task_colors)
   assign_task     task; owner (me | user | nobody), group (id | name | none),
                   other_assignees: [user, ...] (replaces the list) or
                   add_other_assignees / remove_other_assignees: [user, ...]
     Only the given fields change. group and the other assignees need the
     Group_assign plugin, 1.8.4 or newer, on the server; a group must be added
     to the project, and a non-admin user can give it only by id.
+  set_task_color  task, color (id | name, from list_task_colors)
+    Returns the new and the previous color.
   add_comment     task, content
   update_comment  comment_id, content   only comments of this server's Kanboard
                   user that have a signature footer, so never a comment the

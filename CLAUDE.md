@@ -13,10 +13,10 @@ Three Go binaries sharing one config file and one Kanboard JSON-RPC client, no d
 - **`kanboard-task`** (CLI): dumps one or more tasks as agent-friendly JSON (description, comments,
   attachments, subtasks, links, resolved names). Built for AI agents that need to read tickets. With
   `-w/--writable` its go-flags subcommands (`create-task`, `comment`, `edit-comment`, `upload`, `link`,
-  `unlink`, `add-url`, `remove-url`, `assign`, `move`, `close`, `open`) change Kanboard; without it, it must never call
+  `unlink`, `add-url`, `remove-url`, `assign`, `color`, `move`, `close`, `open`) change Kanboard; without it, it must never call
   a Kanboard procedure that modifies data.
 - **`kanboard-mcp`** (MCP server over stdio): the same data as MCP tools `get_task` (with `fields`
-  and `max_comments`), `search_tasks`, `get_attachment` and `download_attachments`. Same read-only rule as
+  and `max_comments`), `search_tasks`, `get_attachment`, `download_attachments` and `list_task_colors`. Same read-only rule as
   `kanboard-task`: the write tools (`internal/mcpserver/write.go`) are registered only with `--writable`.
   Without it, `download_attachments` is the only tool that writes, and only local files below the
   server's `--download-dir` (default `kanboard-mcp/attachments` in the user cache dir); the agent never
@@ -43,10 +43,10 @@ go run ./cmd/kanboard-mcp --info                        # documents the MCP tool
 go test ./...                  # unit tests (taskdump, taskedit) + MCP tool tests against a fake Kanboard (mcpserver)
 ```
 
-Tests: `internal/kanboard` (`TestRpcAnswerAfterPhpNotice`), `internal/taskdump` (`TestRewriteEmbeddedFiles`, `TestSanitizeFileName*`), `internal/taskedit`
-(signature footer, name matching) and `internal/mcpserver`, which connects an SDK client
+Tests: `internal/kanboard` (`TestRpcAnswerAfterPhpNotice`, `TestDecodeColorList`), `internal/taskdump` (`TestRewriteEmbeddedFiles`, `TestSanitizeFileName*`), `internal/taskedit`
+(signature footer, name and color matching) and `internal/mcpserver`, which connects an SDK client
 over in-memory transports to the server, backed by an `httptest` fake of the Kanboard JSON-RPC endpoint (no
-network, no credentials; `write_test.go` covers the write tools). CI (`.github/workflows/go.yml`) does not run tests and only builds
+network, no credentials; `write_test.go` covers the write tools, `color_test.go` the color tools). CI (`.github/workflows/go.yml`) does not run tests and only builds
 linux/amd64, windows/amd64 and darwin/arm64 with the same `-ldflags -X ...internal/version.{Built,Commit,Branch}`
 pattern that `scripts/build.sh` uses. If you add a version field or a new `cmd/`, update both (the `cmds=` list in the
 script and the per-binary build steps in the workflow). Both build `cmd/<name>/<name>.go` as a single file, so
@@ -135,7 +135,10 @@ Supporting packages:
   `other_assignees` come from the optional Group_assign plugin: `getTask` then also returns `owner_gp`/`owner_ms`
   (0 or absent without the plugin, and then no plugin procedure is called), the group name comes from the
   admin-only `getGroup`, the users from the plugin's `getTaskGroupAssign` (1.8.4+; "Method not found" from an
-  older plugin becomes a warning, see `kanboard.IsMethodNotFound`). `select.go` derives
+  older plugin becomes a warning, see `kanboard.IsMethodNotFound`). `colors.go` (`ListColors`, for `--colors` and
+  `list_task_colors`) combines `getColorList` (every valid color id with its translated name, including colors a
+  plugin adds; decoded in the server's order, which a Go map would lose) with `getDefaultTaskColors` (CSS colors,
+  built-in colors only) and `getDefaultTaskColor`. `select.go` derives
   `TaskFields` from the `TaskDocument` json tags (so new model fields become selectable automatically) and
   `SelectFields` encodes only the selected keys in model order; `MarshalJSON` is the non-HTML-escaping encoder.
 - **`internal/taskedit`** – the changes behind `--writable` (`Editor`, shared by both binaries). Resolves
@@ -145,7 +148,9 @@ Supporting packages:
   author is `getMe` with a personal token, `Kanboard.UserId` with the `jsonrpc` token. `assign.go` sets the
   Group_assign plugin's group and other assignees (`createTaskGroupAssign` for a new task, `patchTaskGroupAssign`
   for an existing one, which needs plugin 1.8.4+; never the plugin's `updateTaskGroupAssign`, which resets the
-  fields it is not given) and the owner (`updateTask` with only `owner_id`). Link types
+  fields it is not given) and the owner (`updateTask` with only `owner_id`). `color.go` resolves a color id or
+  name (`findColor`) and sets it (`updateTask` with only `color_id`); it reads the task back, because an automatic
+  action of the project may change the color again, and then warns. Link types
   (`getAllLinks`) are admin-only for personal tokens, so it falls back to Kanboard's default labels and
   checks the created link's label.
 - **`internal/mcpserver`** – the `kanboard-mcp` tools on top of `taskdump` (and `taskedit` in `write.go`). Each call builds its own `Dumper`

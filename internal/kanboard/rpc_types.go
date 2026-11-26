@@ -56,11 +56,6 @@ type KbResponseProjectUrls struct {
 	List     string `json:"list"`
 }
 
-type KbResponseGetColorList struct {
-	JsonRpc string            `json:"jsonrpc"`
-	Id      int32             `json:"id"`
-	Colors  map[string]string `json:"result"`
-}
 type KbResponseGetAllCategories struct {
 	JsonRpc string               `json:"jsonrpc"`
 	Id      int32                `json:"id"`

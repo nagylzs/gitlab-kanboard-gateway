@@ -1,6 +1,6 @@
 // Package taskedit makes the changes that kanboard-mcp and kanboard-task offer when
-// they are started with --writable: create tasks, add and edit comments, upload
-// files, add and remove links, move, close and reopen tasks.
+// they are started with --writable: create tasks, assign them, set their color, add
+// and edit comments, upload files, add and remove links, move, close and reopen tasks.
 //
 // Nothing here deletes a task, a comment or a file. Text written by an agent (a task
 // description, a comment) gets a signature footer, so readers can tell it from text

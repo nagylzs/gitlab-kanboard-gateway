@@ -47,6 +47,7 @@ type opts struct {
 	Projects         []string `short:"p" long:"project" description:"With --search: only this project (id, or part of the name); repeatable" value-name:"PROJECT"`
 	IncludeInactive  bool     `long:"include-inactive" description:"With --search: also search inactive projects"`
 	Limit            int      `long:"limit" description:"With --search: print at most this many hits (0 = no limit)" default:"50"`
+	Colors           bool     `long:"colors" description:"List the colors a task can have instead of dumping TASKs"`
 	Writable         bool     `short:"w" long:"writable" description:"Allow the commands that change Kanboard (see --info)"`
 	Signature        string   `long:"signature" description:"Sign descriptions and comments written by the commands with \"created by TEXT\" (default: no signature)" value-name:"TEXT"`
 	UploadDir        string   `long:"upload-dir" description:"upload reads files only below DIR (default: the current directory)" value-name:"DIR"`
@@ -61,6 +62,7 @@ type opts struct {
 	AddUrl      addUrlCmd      `command:"add-url" description:"Attach a URL to a task (needs --writable)"`
 	RemoveUrl   unlinkCmd      `command:"remove-url" description:"Remove an external link of a task (needs --writable)"`
 	Assign      assignCmd      `command:"assign" description:"Change the assignee, group or other assignees of a task (needs --writable)"`
+	SetColor    colorCmd       `command:"color" description:"Set the color of a task (needs --writable)"`
 	Move        moveCmd        `command:"move" description:"Move a task to another column, swimlane or position (needs --writable)"`
 	Close       taskCmd        `command:"close" description:"Close a task (needs --writable)"`
 	Open        taskCmd        `command:"open" description:"Reopen a task (needs --writable)"`
@@ -101,6 +103,7 @@ type createTaskCmd struct {
 	Category        string   `long:"category" description:"Category id or name"`
 	Owner           string   `long:"owner" description:"Assignee: me, user id, name or username"`
 	Tags            []string `long:"tag" description:"Tag; repeatable"`
+	Color           string   `long:"color" description:"Color id or name (see --colors; default: the server's default color)"`
 	Group           string   `long:"group" description:"Assigned group, id or name (Group_assign plugin)"`
 	OtherAssignees  []string `long:"other-assignee" description:"Other assignee: me, user id, name or username (Group_assign plugin); repeatable" value-name:"USER"`
 	Args            struct {
@@ -166,6 +169,13 @@ type assignCmd struct {
 	} `positional-args:"yes" required:"yes"`
 }
 
+type colorCmd struct {
+	Args struct {
+		Task  string `positional-arg-name:"TASK"`
+		Color string `positional-arg-name:"COLOR" description:"Color id or name (see --colors)"`
+	} `positional-args:"yes" required:"yes"`
+}
+
 type moveCmd struct {
 	Column   string `long:"column" description:"Column id or name (default: the current one)"`
 	Swimlane string `long:"swimlane" description:"Swimlane id or name (default: the current one)"`
@@ -215,8 +225,8 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
 	if parser.Active != nil {
-		if len(tasks) > 0 || o.Search != "" {
-			fmt.Fprintf(os.Stderr, "error: TASK arguments and --search cannot be combined with the %v command\n", parser.Active.Name)
+		if len(tasks) > 0 || o.Search != "" || o.Colors {
+			fmt.Fprintf(os.Stderr, "error: TASK arguments, --search and --colors cannot be combined with the %v command\n", parser.Active.Name)
 			os.Exit(exitUsage)
 		}
 		os.Exit(runCommand(o, parser.Active.Name))
@@ -224,6 +234,14 @@ func main() {
 	if o.Signature != "" || o.UploadDir != "" {
 		fmt.Fprintln(os.Stderr, "error: --signature and --upload-dir are only used by the commands that change Kanboard")
 		os.Exit(exitUsage)
+	}
+
+	if o.Colors {
+		if len(tasks) > 0 || o.Search != "" || len(o.Projects) > 0 || o.IncludeInactive {
+			fmt.Fprintln(os.Stderr, "error: --colors cannot be combined with TASK arguments or --search")
+			os.Exit(exitUsage)
+		}
+		os.Exit(listColors(o))
 	}
 
 	if o.Search != "" {
@@ -319,6 +337,23 @@ func search(o opts) int {
 	return exitOk
 }
 
+func listColors(o opts) int {
+	cfg, err := config.LoadKanboardConfig(o.ConfigFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return exitUsage
+	}
+	res, err := taskdump.ListColors(*cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return exitApiError
+	}
+	if err := printJson(res, o.Compact); err != nil {
+		return exitApiError
+	}
+	return exitOk
+}
+
 // runCommand runs one of the commands that change Kanboard and returns the exit code.
 func runCommand(o opts, name string) int {
 	if !o.Writable {
@@ -357,7 +392,7 @@ func runCommand(o opts, name string) int {
 		res, err = ed.CreateTask(taskedit.CreateTaskInput{
 			Project: c.Args.Project, Title: c.Args.Title, Description: desc,
 			Column: c.Column, Swimlane: c.Swimlane, Category: c.Category, Owner: c.Owner, Tags: c.Tags,
-			Group: c.Group, OtherAssignees: c.OtherAssignees,
+			Color: c.Color, Group: c.Group, OtherAssignees: c.OtherAssignees,
 		})
 	case "comment", "edit-comment", "upload":
 		var t textOpts
@@ -402,6 +437,8 @@ func runCommand(o opts, name string) int {
 			in.OtherAssignees = []string{}
 		}
 		res, err = ed.AssignTask(c.Args.Task, in)
+	case "color":
+		res, err = ed.SetTaskColor(o.SetColor.Args.Task, o.SetColor.Args.Color)
 	case "move":
 		res, err = ed.MoveTask(o.Move.Args.Task, o.Move.Column, o.Move.Swimlane, o.Move.Position)
 	case "close":
@@ -443,6 +480,7 @@ const infoText = `kanboard-task - dump a Kanboard task as JSON (read-only withou
 USAGE
   kanboard-task -c config.yml [-o DIR] TASK [TASK...]
   kanboard-task -c config.yml -s QUERY [-p PROJECT]... [--limit N]
+  kanboard-task -c config.yml --colors
   kanboard-task -c config.yml --writable [--signature TEXT] COMMAND ...   (see COMMANDS)
 
   TASK may be a number (123), a hash reference (#123, #KB123), or a task URL.
@@ -476,7 +514,8 @@ JSON FIELDS (top level)
   column {id,name}              board column the task is in (null if unknown)
   swimlane {id,name} | null
   category {id,name} | null
-  color, priority, score, reference, position
+  color                         color id; --colors lists the names (see COLORS)
+  priority, score, reference, position
   owner {id,username,name,email} | null      the assignee (see AUTHENTICATION)
   assigned_group {id,name}      "Assigned Group" of the Group_assign plugin; only
                                 present when set. name is empty for a non-admin
@@ -519,7 +558,8 @@ SEARCH (--search QUERY)
   QUERY uses the web UI search syntax: plain words match the title and
   description; filters such as status:open, assignee:<username>, creator:...,
   title:"...", description:..., comment:..., tag:..., column:..., category:...,
-  created:>=2026-01-01 can be combined ("me", as in assignee:me, works only with a
+  created:>=2026-01-01, color:<color id> (only Kanboard's built-in colors, not those
+  a plugin adds) can be combined ("me", as in assignee:me, works only with a
   personal token). Without a status: filter both open and closed tasks are returned.
   With the Group_assign plugin, allassignees:<username> also finds the tasks where
   the user is one of the other assignees or a member of the assigned group.
@@ -540,10 +580,22 @@ SEARCH (--search QUERY)
   Exit codes: 0 ok (also with no hits), 1 usage error or no project matches
   --project, 3 API error (project list failed, or the search failed everywhere).
 
+COLORS (--colors)
+  Prints the colors a task can have, as one JSON object:
+  default                       color id of a task created without a color
+  colors [{id,name,background?,border?}]
+                                in the order of the web UI's color menu. id is what
+                                a task's color field holds; name is translated to
+                                the server's language. background and border (CSS
+                                colors) are known only for Kanboard's built-in
+                                colors, not for colors that a plugin adds.
+  warnings [string]             present only if the default color or the CSS
+                                colors could not be loaded
+
 COMMANDS (change Kanboard; only with -w/--writable)
   create-task PROJECT TITLE [--description TEXT | --description-file FILE]
               [--column C] [--swimlane S] [--category C] [--owner U] [--tag T]...
-              [--group G] [--other-assignee U]...
+              [--group G] [--other-assignee U]... [--color C]
   comment TASK (--text TEXT | --text-file FILE)
   edit-comment COMMENT_ID (--text TEXT | --text-file FILE)
   upload TASK FILE... [--text TEXT | --text-file FILE]
@@ -554,6 +606,7 @@ COMMANDS (change Kanboard; only with -w/--writable)
   assign TASK [--owner U|nobody] [--group G|none]
               [--other-assignee U... | --no-other-assignees]
               [--add-other-assignee U]... [--remove-other-assignee U]...
+  color TASK COLOR                  e.g. color 12 red, color 12 "deep orange"
   move TASK [--column C] [--swimlane S] [--position N]   (1 = top, default: bottom)
   close TASK, open TASK
 
@@ -564,6 +617,9 @@ COMMANDS (change Kanboard; only with -w/--writable)
   Projects, columns, swimlanes, categories and users are given by id or name
   (exact, or a part of exactly one name, case-insensitive); a wrong name is
   refused with the list of valid ones. --owner also accepts "me" and usernames.
+  A color (create-task --color, color) is a color id or name from --colors,
+  case-insensitive, also with spaces instead of underscores; color prints the
+  new and the previous color.
 
   --group and the other assignees need the Group_assign plugin on the server,
   assign needs version 1.8.4 or newer of it. A group must be added to the
@@ -599,4 +655,5 @@ EXAMPLES
   kanboard-task -c config.yml -w --signature Claude comment 13670 --text 'Fixed in !123.'
   kanboard-task -c config.yml -w --signature Claude upload 13670 shot.png --text 'After:'
   kanboard-task -c config.yml -w move 13670 --column Done
+  kanboard-task -c config.yml -w color 13670 red
 `

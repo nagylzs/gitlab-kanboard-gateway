@@ -53,7 +53,8 @@ const instructions = "Read-only access to a Kanboard server; nothing is ever mod
 const readTools = `- get_task: everything about one or more tasks as JSON. Use fields and max_comments to keep big tickets small.
 - search_tasks: find tasks with the Kanboard search syntax; returns short summaries, use get_task for the full ticket.
 - get_attachment: shows an attachment, e.g. a screenshot embedded in a comment (see the comment's attachment_ids).
-- download_attachments: saves attachments of any type (docx, pdf, xlsx, zip, ...) into local files and returns their paths.`
+- download_attachments: saves attachments of any type (docx, pdf, xlsx, zip, ...) into local files and returns their paths.
+- list_task_colors: the colors a task can have (id and name).`
 
 // New builds the server. Each tool call creates its own taskdump.Dumper, so calls
 // may run concurrently.
@@ -71,6 +72,7 @@ func New(cfg config.KanboardConfig, opts Options) *mcp.Server {
 	mcp.AddTool(s, searchTasksTool(), t.searchTasks)
 	mcp.AddTool(s, getAttachmentTool(), t.getAttachment)
 	mcp.AddTool(s, downloadAttachmentsTool(), t.downloadAttachments)
+	mcp.AddTool(s, listTaskColorsTool(opts.Writable), t.listTaskColors)
 	if opts.Writable {
 		addWriteTools(s, cfg, opts)
 	}
@@ -107,8 +109,9 @@ func getTaskTool() *mcp.Tool {
 		Name:  "get_task",
 		Title: "Get Kanboard tasks",
 		Description: `Returns everything about one or more Kanboard tasks as a JSON array, one object per requested task, in the requested order: ` +
-			`title, description (markdown), status, project, column, swimlane, category, owner (the assignee), ` +
-			`assigned_group and other_assignees (Kanboard's Group_assign plugin, present only when set), creator, dates (RFC 3339), ` +
+			`title, description (markdown), status, project, column, swimlane, category, color (an id from list_task_colors), ` +
+			`owner (the assignee), assigned_group and other_assignees (Kanboard's Group_assign plugin, present only when set), ` +
+			`creator, dates (RFC 3339), ` +
 			`time_tracking, tags, metadata, subtasks, comments (markdown, oldest first), attachments, links to other tasks and external_links. ` +
 			`Ids are resolved to names. A task that could not be loaded is returned as {"id": N, "error": "..."}. ` +
 			`A "warnings" list means some part of the task could not be loaded; that part is then empty. ` +
@@ -181,7 +184,8 @@ func searchTasksTool() *mcp.Tool {
 			`assignee, priority, reference, dates, time_tracking, counts, description_excerpt}] newest modification first, and warnings ` +
 			`(projects whose search failed). Use get_task for the full ticket. ` +
 			`Query syntax: plain words match title and description; filters such as status:open, status:closed, assignee:<username>, ` +
-			`creator:<username>, title:"...", description:..., comment:..., tag:..., column:..., category:..., created:>=2026-01-01 ` +
+			`creator:<username>, title:"...", description:..., comment:..., tag:..., column:..., category:..., created:>=2026-01-01, ` +
+			`color:<color id> (only Kanboard's built-in colors, not those a plugin adds) ` +
 			`can be combined with spaces. Without a status: filter both open and closed tasks match. ` +
 			`"me" (assignee:me) is the Kanboard user of this server and works only if it logs in with a personal token. ` +
 			`If the server has the Group_assign plugin, allassignees:<username> also finds the tasks where the user is one of the ` +
@@ -199,6 +203,34 @@ func (t *tools) searchTasks(_ context.Context, _ *mcp.CallToolRequest, in search
 		Limit:           in.Limit,
 		Workers:         8,
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return textResult(res)
+}
+
+// --- list_task_colors ---
+
+type noInput struct{}
+
+func listTaskColorsTool(writable bool) *mcp.Tool {
+	use := ""
+	if writable {
+		use = "create_task and set_task_color accept the id or the name. "
+	}
+	return &mcp.Tool{
+		Name:  "list_task_colors",
+		Title: "List Kanboard task colors",
+		Description: `Returns the colors a Kanboard task can have, as a JSON object: default (the color id of a task created ` +
+			`without a color) and colors [{id, name, background, border}] in the order of the web UI's color menu. ` +
+			`get_task's color is one of these ids. ` + use + `name is translated to the server's language. ` +
+			`background and border (CSS colors) are known only for Kanboard's built-in colors, not for those a plugin adds.`,
+		Annotations: readOnly,
+	}
+}
+
+func (t *tools) listTaskColors(_ context.Context, _ *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
+	res, err := taskdump.ListColors(t.cfg)
 	if err != nil {
 		return nil, nil, err
 	}

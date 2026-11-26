@@ -31,6 +31,51 @@ type fakeKanboard struct {
 	// patchTaskGroupAssign), or the server has no Group_assign plugin at all.
 	oldGroupAssign atomic.Bool
 	noGroupAssign  atomic.Bool
+	// Task colors set by createTask and updateTask (default: yellow). actionColor
+	// imitates an automatic action of the project that changes the color again.
+	taskColors  map[int]string
+	actionColor string
+}
+
+// setActionColor makes every later color change end up as color.
+func (f *fakeKanboard) setActionColor(color string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.actionColor = color
+}
+
+// setColor records the color a write procedure gave a task.
+func (f *fakeKanboard) setColor(taskId int, params map[string]any) {
+	color, ok := params["color_id"].(string)
+	if !ok {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.taskColors == nil {
+		f.taskColors = make(map[int]string)
+	}
+	if f.actionColor != "" {
+		color = f.actionColor
+	}
+	f.taskColors[taskId] = color
+}
+
+// withColor adds the task's color_id to a getTask result.
+func (f *fakeKanboard) withColor(taskId int, task string) string {
+	var m map[string]any
+	if json.Unmarshal([]byte(task), &m) != nil || m == nil {
+		return task
+	}
+	f.mu.Lock()
+	color := f.taskColors[taskId]
+	f.mu.Unlock()
+	if color == "" {
+		color = "yellow"
+	}
+	m["color_id"] = color
+	data, _ := json.Marshal(m)
+	return string(data)
 }
 
 // count returns how many times a procedure was called.
@@ -105,6 +150,7 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case 40:
 			result = `{"id":40,"title":"New","project_id":7,"column_id":2,"swimlane_id":1,"is_active":true,"url":"http://kb/task/40"}`
 		}
+		result = f.withColor(param("task_id"), result)
 	case "getGroup":
 		if param("group_id") == 2 {
 			result = `{"id":2,"external_id":"","name":"Devs"}`
@@ -113,7 +159,11 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result = `[{"id":2,"external_id":"","name":"Devs"},{"id":5,"external_id":"","name":"Ops"}]`
 	case "createTaskGroupAssign":
 		result = "3" // the task with a group and other assignees
-	case "patchTaskGroupAssign", "updateTask":
+		f.setColor(3, req.Params)
+	case "updateTask":
+		result = "true"
+		f.setColor(param("id"), req.Params)
+	case "patchTaskGroupAssign":
 		result = "true"
 	case "getTaskGroupAssign":
 		result = "false"
@@ -146,6 +196,17 @@ func (f *fakeKanboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result = `{"9":"Agent","4":"Ann"}`
 	case "createTask":
 		result = "40"
+		f.setColor(40, req.Params)
+	// Built-in colors with translated names, and a color that a plugin adds; not sorted.
+	case "getColorList":
+		result = `{"yellow":"Sárga","red":"Piros","white_on_black":"White on Black","deep_orange":"Sötét narancs","orange":"Narancssárga"}`
+	case "getDefaultTaskColors":
+		result = `{"yellow":{"name":"Yellow","background":"rgb(245, 247, 196)","border":"rgb(223, 227, 45)"},` +
+			`"red":{"name":"Red","background":"rgb(255, 187, 187)","border":"rgb(255, 151, 151)"},` +
+			`"orange":{"name":"Orange","background":"rgb(255, 215, 179)","border":"rgb(255, 172, 98)"},` +
+			`"deep_orange":{"name":"Deep Orange","background":"#ffab91","border":"#e64a19"}}`
+	case "getDefaultTaskColor":
+		result = `"yellow"`
 	case "createTaskFile":
 		result = fmt.Sprint(50 + nWrites)
 	case "getAllComments":
@@ -243,7 +304,7 @@ func TestListTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	if want := []string{"download_attachments", "get_attachment", "get_task", "search_tasks"}; !slices.Equal(names, want) {
+	if want := []string{"download_attachments", "get_attachment", "get_task", "list_task_colors", "search_tasks"}; !slices.Equal(names, want) {
 		t.Errorf("tools = %v, want %v", names, want)
 	}
 }

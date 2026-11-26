@@ -21,6 +21,7 @@ type CreateTaskInput struct {
 	Category    string   // id or name; default: none
 	Owner       string   // assignee: "me", id, name or username; default: nobody
 	Tags        []string // created in the project when they do not exist yet
+	Color       string   // color id or name (see findColor); default: the server's default color
 	// Group_assign plugin: the assigned group (id or name) and other assignees (like Owner).
 	Group          string
 	OtherAssignees []string
@@ -32,6 +33,7 @@ type TaskResult struct {
 	Url      string             `json:"url"`
 	Title    string             `json:"title"`
 	Status   string             `json:"status"`
+	Color    string             `json:"color,omitempty"` // color id
 	Project  taskdump.NamedRef  `json:"project"`
 	Column   *taskdump.NamedRef `json:"column"`
 	Swimlane *taskdump.NamedRef `json:"swimlane"`
@@ -61,6 +63,18 @@ func (e *Editor) CreateTask(in CreateTaskInput) (*TaskResult, error) {
 		if t = strings.TrimSpace(t); t != "" {
 			params.Tags = append(params.Tags, t)
 		}
+	}
+	var color *taskdump.Color
+	if in.Color != "" {
+		colors, err := taskdump.ListColors(e.cfg)
+		if err != nil {
+			return nil, err
+		}
+		c, err := findColor(in.Color, colors.Colors)
+		if err != nil {
+			return nil, err
+		}
+		color, params.ColorId = &c, c.Id
 	}
 	cols, err := e.columns(projectId)
 	if err != nil {
@@ -142,6 +156,11 @@ func (e *Editor) CreateTask(in CreateTaskInput) (*TaskResult, error) {
 		a := e.assignResult(id)
 		res.AssignedGroup, res.OtherAssignees, res.Warnings = a.AssignedGroup, a.OtherAssignees, a.Warnings
 	}
+	if err == nil && color != nil {
+		if w := colorChanged(color.Id, res.Color); w != "" {
+			res.Warnings = append(res.Warnings, w)
+		}
+	}
 	return res, err
 }
 
@@ -164,6 +183,7 @@ func (e *Editor) taskResult(taskId int, cols, lanes []named) (*TaskResult, error
 		Url:      t.Url,
 		Title:    t.Title,
 		Status:   status(t.IsActive),
+		Color:    t.ColorId,
 		Project:  taskdump.NamedRef{Id: t.ProjectId},
 		Position: t.Position,
 	}

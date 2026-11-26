@@ -239,6 +239,18 @@ kanboard-task -c config.yml -s 'export' --limit 0 --include-inactive
 whose search failed is listed in `warnings`; the others are still printed. Dump a hit by id for the full
 ticket.
 
+### Task colors
+
+`--colors` prints the colors a task can have: `default` (the color of a task created without one) and
+`colors [{id, name, background, border}]` in the order of the web UI's color menu. A task's `color` field
+is one of these ids. The names are translated to the server's language. `background` and `border` (CSS
+colors) are known only for Kanboard's built-in colors, not for colors that a plugin adds. In searches,
+`color:<id>` also works only for the built-in colors.
+
+```bash
+kanboard-task -c config.yml --colors
+```
+
 Notable output details:
 
 * Ids are resolved to names, timestamps are RFC 3339 strings, `null` means "not set".
@@ -309,6 +321,7 @@ person can see, and
 | `search_tasks`         | `query`, `projects`, `include_inactive`, `limit` (default 50) | the `kanboard-task --search` JSON object                 |
 | `get_attachment`       | `file_id`                                                     | an image (png, jpeg, gif, webp), or text (first 100 KiB) |
 | `download_attachments` | `tasks` (every attachment of these tasks), `file_ids`         | the local paths of the saved files, and what was skipped |
+| `list_task_colors`     | none                                                          | the `kanboard-task --colors` JSON object                 |
 
 * `fields` limits a task to the listed top-level fields (`id` and `warnings` are always included). The API
   calls behind the other fields are skipped, so this is also faster. `max_comments` keeps only the newest
@@ -344,7 +357,7 @@ claude mcp add kanboard -- /path/to/kanboard-mcp --writable --signature Claude /
 
 | Tool (`kanboard-mcp`)  | Command (`kanboard-task`)                      | What it does                                         |
 |------------------------|------------------------------------------------|------------------------------------------------------|
-| `create_task`          | `create-task PROJECT TITLE [--description ...]` | new task; column, swimlane, category, owner, tags   |
+| `create_task`          | `create-task PROJECT TITLE [--description ...]` | new task; column, swimlane, category, owner, tags, color |
 | `add_comment`          | `comment TASK --text ...`                      | comment on a task                                    |
 | `update_comment`       | `edit-comment COMMENT_ID --text ...`           | replace the text of a comment written by the agent   |
 | `upload_files`         | `upload TASK FILE... [--text ...]`             | attach files, with one comment that shows them       |
@@ -353,6 +366,7 @@ claude mcp add kanboard -- /path/to/kanboard-mcp --writable --signature Claude /
 | `add_external_link`    | `add-url TASK URL [--title ...]`               | attach a URL                                         |
 | `remove_external_link` | `remove-url TASK LINK_ID`                      | remove a URL                                         |
 | `assign_task`          | `assign TASK [--owner] [--group] [--add-other-assignee] ...` | assignee, group, other assignees  |
+| `set_task_color`       | `color TASK COLOR`                             | change the color of a task                           |
 | `move_task`            | `move TASK [--column] [--swimlane] [--position]` | another column, swimlane or position              |
 | `close_task`, `open_task` | `close TASK`, `open TASK`                   | close or reopen                                      |
 
@@ -386,6 +400,11 @@ claude mcp add kanboard -- /path/to/kanboard-mcp --writable --signature Claude /
   `remove_other_assignees` change it one by one. `assign_task` needs version 1.8.4 or newer of the plugin;
   older versions can only overwrite every field at once, which is not used. The group must be added to the
   project, and a non-administrator can give it only by id, because listing groups is admin-only.
+* **Colors.** `create_task` (`--color`) and `set_task_color` (`color`) take a color id or name from
+  `list_task_colors` (`--colors`), case-insensitive, also with spaces instead of underscores
+  (`deep orange`); an unknown color is refused with the list of ids. `set_task_color` returns the new and
+  the previous color. If an automatic action of the project changes the color again (such as *assign a
+  color to a category*), the result shows the color the task ended up with, and a warning.
 * `kanboard-task` reads a long text from a file or stdin with `--text-file FILE` (`-` = stdin), and
   `--description-file` for `create-task`. It prints the result as JSON.
 
@@ -395,6 +414,7 @@ kanboard-task -c config.yml -w --signature Claude create-task webshop 'Export fa
   --description-file notes.md
 kanboard-task -c config.yml -w --signature Claude upload 13670 screenshot.png --text 'After the fix:'
 kanboard-task -c config.yml -w move 13670 --column Done
+kanboard-task -c config.yml -w color 13670 red
 ```
 
 ## Development

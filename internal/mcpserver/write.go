@@ -21,6 +21,7 @@ Changing (in the name of the Kanboard user of this server; descriptions and comm
 - create_task: new task in a project.
 - assign_task: change the assignee; with the Group_assign plugin also the assigned group and the other assignees
   (several users on one task).
+- set_task_color: change the color of a task (list_task_colors lists the colors).
 - add_comment, update_comment: comment on a task; edit a comment written through this server (not a person's).
 - upload_files: attach local files from the upload directory to a task, with a comment that shows them.
 - add_task_link, remove_task_link: links between tasks ("blocks", "relates to", ...).
@@ -52,6 +53,7 @@ func addWriteTools(s *mcp.Server, cfg config.KanboardConfig, opts Options) {
 	mcp.AddTool(s, addExternalLinkTool(), w.addExternalLink)
 	mcp.AddTool(s, removeExternalLinkTool(), w.removeExternalLink)
 	mcp.AddTool(s, assignTaskTool(), w.assignTask)
+	mcp.AddTool(s, setTaskColorTool(), w.setTaskColor)
 	mcp.AddTool(s, moveTaskTool(), w.moveTask)
 	mcp.AddTool(s, setStatusTool("close_task", "Close a Kanboard task", "Closes a task (it stays where it is on the board). "+
 		"Closing a closed task changes nothing."), w.closeTask)
@@ -84,6 +86,7 @@ type createTaskInput struct {
 	Category    string   `json:"category,omitempty" jsonschema:"Category id or name (default: none)"`
 	Owner       string   `json:"owner,omitempty" jsonschema:"Assignee: me, a user id, name or username; must be a project member (default: nobody)"`
 	Tags        []string `json:"tags,omitempty" jsonschema:"Tags; new ones are created in the project"`
+	Color       string   `json:"color,omitempty" jsonschema:"Color id or name, see list_task_colors (default: the server's default color)"`
 	Group       string   `json:"group,omitempty" jsonschema:"Assigned group (needs the Group_assign plugin): group id or name; the group must be added to the project"`
 	Others      []string `json:"other_assignees,omitempty" jsonschema:"Other assignees besides the owner (needs the Group_assign plugin): me, user ids, names or usernames of project members"`
 }
@@ -99,7 +102,7 @@ func createTaskTool() *mcp.Tool {
 	return &mcp.Tool{
 		Name:  "create_task",
 		Title: "Create a Kanboard task",
-		Description: `Creates a task and returns a JSON object: id, url, title, status, project, column, swimlane, position. ` +
+		Description: `Creates a task and returns a JSON object: id, url, title, status, color, project, column, swimlane, position. ` +
 			`With a group or other assignees, also assigned_group and other_assignees. ` +
 			`A signature footer is added below the description. Names are matched case-insensitively; ` +
 			`a wrong name is refused with the list of valid ones.`,
@@ -112,7 +115,7 @@ func (w *writeTools) createTask(_ context.Context, _ *mcp.CallToolRequest, in cr
 	res, err := w.ed.CreateTask(taskedit.CreateTaskInput{
 		Project: in.Project, Title: in.Title, Description: in.Description,
 		Column: in.Column, Swimlane: in.Swimlane, Category: in.Category, Owner: in.Owner, Tags: in.Tags,
-		Group: in.Group, OtherAssignees: in.Others,
+		Color: in.Color, Group: in.Group, OtherAssignees: in.Others,
 	})
 	return done("create_task", res, err)
 }
@@ -155,6 +158,34 @@ func (w *writeTools) assignTask(_ context.Context, _ *mcp.CallToolRequest, in as
 		AddOtherAssignees: in.Add, RemoveOtherAssignees: in.Remove,
 	})
 	return done("assign_task", res, err)
+}
+
+// --- set_task_color ---
+
+type setTaskColorInput struct {
+	Task  string `json:"task" jsonschema:"Task id (123), #KB123 reference or task URL"`
+	Color string `json:"color" jsonschema:"Color id (e.g. red, deep_orange) or name, as list_task_colors shows them"`
+}
+
+func setTaskColorTool() *mcp.Tool {
+	schema := mustSchema[setTaskColorInput]()
+	schema.Properties["task"].MinLength = ptr(1)
+	schema.Properties["color"].MinLength = ptr(1)
+	return &mcp.Tool{
+		Name:  "set_task_color",
+		Title: "Set the color of a Kanboard task",
+		Description: `Changes the color of a task. color is an id or a name from list_task_colors, case-insensitive ` +
+			`(a part of exactly one name also works); an unknown color is refused with the list of ids. ` +
+			`Returns a JSON object: id, url, title, color {id, name}, previous_color {id, name}, and warnings, e.g. when ` +
+			`an automatic action of the project changed the color again.`,
+		InputSchema: schema,
+		Annotations: changingIdempotent,
+	}
+}
+
+func (w *writeTools) setTaskColor(_ context.Context, _ *mcp.CallToolRequest, in setTaskColorInput) (*mcp.CallToolResult, any, error) {
+	res, err := w.ed.SetTaskColor(in.Task, in.Color)
+	return done("set_task_color", res, err)
 }
 
 // --- comments ---
@@ -340,7 +371,7 @@ func moveTaskTool() *mcp.Tool {
 		Title: "Move a Kanboard task",
 		Description: `Moves a task to another column and/or swimlane of its project, or to another position in its column; ` +
 			`give at least one of them. A wrong name is refused with the list of valid ones. ` +
-			`Returns a JSON object: id, url, title, status, project, column, swimlane, position.`,
+			`Returns a JSON object: id, url, title, status, color, project, column, swimlane, position.`,
 		InputSchema: schema,
 		Annotations: changing,
 	}
@@ -359,7 +390,7 @@ func setStatusTool(name, title, description string) *mcp.Tool {
 	return &mcp.Tool{
 		Name:        name,
 		Title:       title,
-		Description: description + ` Returns a JSON object: id, url, title, status, project, column, swimlane, position.`,
+		Description: description + ` Returns a JSON object: id, url, title, status, color, project, column, swimlane, position.`,
 		Annotations: changingIdempotent,
 	}
 }

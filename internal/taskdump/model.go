@@ -23,7 +23,7 @@ type TaskDocument struct {
 	Swimlane *NamedRef  `json:"swimlane"` // null if no swimlane / not resolvable
 	Category *NamedRef  `json:"category"` // null if the task has no category
 
-	Color     string `json:"color"`
+	Color     string `json:"color"` // color id; ListColors has the names
 	Priority  int    `json:"priority"`
 	Score     int    `json:"score"`
 	Reference string `json:"reference"` // free-form external reference field
